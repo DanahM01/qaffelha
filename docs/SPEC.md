@@ -20,7 +20,7 @@ Scope of this version: **Sprint 1 (19 Oct – 1 Nov 2026) — Speed Battle**. Sp
 | Layer | Technology | Version | Notes |
 |---|---|---|---|
 | Front-end | **React** (function components + hooks), **Vite** | React 18, Vite 5 | Plain JavaScript (ES modules), no TypeScript in Sprint 1 |
-| Routing | **react-router-dom** | 6 | Routes: `/host` big screen, `/play` phone, `*` → `/play` |
+| Routing | **react-router-dom** | 6 | Routes: `/` Home, `/host/*` big screen, `/play/*` phone (`/play`, `/play/:code`, `/play/new`), `*` → `/` (full list §6.1) |
 | Real-time client | **socket.io-client** | 4 | One shared connection in `client/src/socket.js` |
 | QR code | **qrcode.react** | 4 | `<QRCodeSVG value={joinUrl} />` |
 | Back-end | **Node.js** + **Express** + **Socket.IO** | Node 20+, Express 4, Socket.IO 4 | ES modules (`"type": "module"`) |
@@ -79,14 +79,14 @@ npm run install:all          # installs server/ and client/
 cp .env.example server/.env  # fill MONGODB_URI (ask Danah)
 npm run seed                 # load database/categories.json into Atlas
 npm run dev:server           # http://localhost:3001  (GET /health → { ok: true })
-npm run dev:client           # http://localhost:5173/host and /play
+npm run dev:client           # http://localhost:5173 (Home), /host, /play, /flow
 npm test                     # server unit tests
 ```
 Testing with real phones: run the client with `npm run dev --prefix client -- --host`, set `VITE_SERVER_URL` and `CLIENT_ORIGIN` to the laptop's LAN IP, all devices on the same Wi-Fi.
 
 ### 0.6 Deployment (Render)
 - **Server:** Web Service, root `server/`, build `npm install`, start `npm start`, env vars from §0.4, health check `/health`. Free tier sleeps after inactivity; first request can take ~30 s.
-- **Client:** Static Site, root `client/`, build `npm install && npm run build`, publish `dist`, env `VITE_SERVER_URL=<server URL>`, rewrite rule `/* → /index.html` so `/host` and `/play` work on refresh.
+- **Client:** Static Site, root `client/`, build `npm install && npm run build`, publish `dist`, env `VITE_SERVER_URL=<server URL>`, rewrite rule `/* → /index.html` so `/host`, `/play/CODE` and every other route work on refresh.
 
 ### 0.7 Coding conventions
 - File names: React components `PascalCase.jsx`, everything else `camelCase.js`.
@@ -266,7 +266,7 @@ All UI is Arabic, RTL, and built only from the identity in §8. Designs: `/flow`
 | `/play` | Join by code (from Home «ادخل غرفة») | Reef |
 | `/play/:code` | QR landing «لقيت الغرفة» → name → game | Reef |
 | `/play/new` | Phones-only host: name → host lobby → game | Reef |
-| `/preview`, `/flow`, `/sim*` | Design references only, not part of the product | Danah |
+| `/preview`, `/flow` | Design references only, not part of the product | Danah |
 
 ### 6.2 Home `/`
 Logo (animated) + tagline «اكتبها قبلهم… وقفّلها!» + three buttons «ادخل غرفة», «العب على شاشة كبيرة», «العب بالجوالات بس». Ordering per §2.3 step 1, done with container queries only.
@@ -313,7 +313,7 @@ Logo (animated) + tagline «اكتبها قبلهم… وقفّلها!» + three
 
 ### 7.3 Techniques
 - Wide breakpoint: **900px** of available width; short phones: `max-height: 740px`. Add breakpoints only when a layout actually breaks.
-- Prefer `@container` queries on the screen wrapper (so screens also work inside `/preview` and simulators); `@media` acceptable.
+- Prefer `@container` queries on the screen wrapper (so screens also work inside `/preview` and `/flow`); `@media` acceptable.
 - Sizes with `clamp()`, `min()`, `max()`, `%`, `fr`, `cqw/cqh`, `dvh`. Fixed px only for borders, shadows and minimum touch sizes.
 - SVG/art scales with its container. Respect `prefers-reduced-motion` in every new animation.
 
@@ -347,7 +347,7 @@ The exact contract is [`../EVENTS.md`](../EVENTS.md) (owner Layan). The server v
 - Current Safari (iOS) and Chrome (Android, desktop). No app install.
 - An answer's result reaches the sender in < 300 ms on normal Wi-Fi; timers in sync across devices within 0.5 s.
 - 12 players in one room without lag.
-- No secrets in the repo; MongoDB URI only in `server/.env`.
+- **Security (the repository is public):** no secrets in the repo, ever. The MongoDB URI lives only in `server/.env` locally and in Render's environment settings in production. Code reads secrets from `process.env` only. Client env vars (`VITE_*`) are bundled into the public site, so they must never hold secrets. Only `*.env.example` files with fake values are committed. `.gitignore` blocks `.env` and `.env.*`. A leaked secret must be rotated in Atlas immediately (removing the file does not remove it from Git history).
 - Server logs one line per room event (create, start, round end, game over); never log answer streams or names in bulk.
 
 ## 12. Ownership and workflow
@@ -394,6 +394,7 @@ The exact contract is [`../EVENTS.md`](../EVENTS.md) (owner Layan). The server v
 - [ ] `check-colors.mjs` passes; no raw colors, no emoji, no new fonts; RTL correct, codes/numbers LTR.
 - [ ] No device detection in the code.
 - [ ] Server logic has `node:test` tests and `npm test` passes.
+- [ ] No secrets in the diff (`.env`, `mongodb+srv://`, passwords, keys, tokens); only `*.env.example` with fake values.
 - [ ] PR description lists the PB key, what changed, and screenshots of a phone size and a wide size.
 
 ## 16. Out of scope for Sprint 1

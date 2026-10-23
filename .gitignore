@@ -1,4 +1,15 @@
+# Dependencies and builds
 node_modules/
 dist/
+
+# Secrets: never commit (only the *.env.example files are allowed)
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor
 .DS_Store
+Thumbs.db
+.vscode/
