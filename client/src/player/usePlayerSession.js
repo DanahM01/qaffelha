@@ -12,6 +12,7 @@ const ROUND_START = 'round:start';
 const ANSWER = 'answer:submit';
 const LOCKED = 'answer:locked';
 const SCORES = 'score:update';
+const ROUND_END = 'round:end';
 const ERRORS = {
   NOT_FOUND: 'الغرفة مو موجودة', NAME_TAKEN: 'الاسم مأخوذ', NAME_INVALID: 'الاسم غير صالح',
   STARTED: 'اللعبة بدأت', FULL: 'الغرفة مليانة', NOT_HOST: 'البدء عند المضيف بس',
@@ -77,15 +78,24 @@ export default function usePlayerSession(navigate) {
     const locked = (payload) => setState((current) => current.status === 'round'
       ? { ...current, locked: [...(current.locked || []).filter((entry) => entry.word !== payload.word), payload] } : current);
     const scores = (payload) => setState((current) => ({ ...current, scores: payload.scores }));
+    const roundEnd = (payload) => {
+      roundRef.current = null; setFeedback(null);
+      setState((current) => ({ ...current, ...payload, status: 'roundEnd',
+        players: current.players.map((player) => player.id === payload.eliminated.id ? { ...player, out: true } : player),
+        me: current.me?.id === payload.eliminated.id ? { ...current.me, out: true } : current.me,
+      }));
+    };
     socket.on('connect', reconnect); socket.on('disconnect', disconnect);
     socket.on(PLAYERS, players); socket.on(COUNTDOWN, countdown);
     socket.on(ROUND_START, roundStart); socket.on(LOCKED, locked); socket.on(SCORES, scores);
+    socket.on(ROUND_END, roundEnd);
     if (socket.connected) reconnect();
     return () => {
       mounted.current = false; ++generation.current;
       socket.off('connect', reconnect); socket.off('disconnect', disconnect);
       socket.off(PLAYERS, players); socket.off(COUNTDOWN, countdown);
       socket.off(ROUND_START, roundStart); socket.off(LOCKED, locked); socket.off(SCORES, scores);
+      socket.off(ROUND_END, roundEnd);
     };
   }, [navigate, request]);
 

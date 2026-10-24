@@ -7,6 +7,7 @@ import JoinScreen from './JoinScreen.jsx';
 import LobbyScreen from './LobbyScreen.jsx';
 import CountdownScreen from './CountdownScreen.jsx';
 import RoundScreen from './RoundScreen.jsx';
+import RoundEndScreen from './RoundEndScreen.jsx';
 
 export default function PlayerApp() {
   const location = useLocation();
@@ -30,7 +31,7 @@ export default function PlayerApp() {
   }
 
   const round = session.identity && session.state.status === 'round';
-  return <main className={`q-app ${round ? 'q-home' : ''}`} dir="rtl" lang="ar"><div className={round ? 'q-m q-m-round' : 'q-screen-player'}>
+  return <main className={`q-app ${round ? 'q-home' : ''}`} dir="rtl" lang="ar"><div className={round ? 'q-screen-player q-phone-round q-m-round' : 'q-screen-player'}>
     {(session.reconnecting || !session.connected) && <p className="q-alert q-alert--info" role="status">{session.identity ? 'نرجعك للعبة…' : 'جاري الاتصال…'}</p>}
     {session.identity ? <>
       {session.state.status === 'lobby' ? <LobbyScreen code={session.identity.code} players={session.state.players}
@@ -39,6 +40,7 @@ export default function PlayerApp() {
         : session.state.status === 'countdown' ? <CountdownScreen state={session.state} offset={session.offset} />
         : round ? <RoundScreen key={session.state.endsAt} state={session.state} meId={session.identity.playerId} offset={session.offset}
           feedback={session.feedback} disabled={!session.connected || session.reconnecting} onAnswer={session.answer} />
+        : session.state.status === 'roundEnd' ? <RoundEndScreen state={session.state} meId={session.identity.playerId} />
         : <><Logo size={40} /><p className="q-waiting">استعدوا…</p></>}
       {session.error && <p className="q-field__error" role="alert">{session.error}</p>}
     </> : session.reconnecting ? <Logo size={64} animated /> : <JoinScreen key={`${host}-${code}`} host={host} initialCode={code}
