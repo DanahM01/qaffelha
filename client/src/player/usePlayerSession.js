@@ -13,6 +13,8 @@ const ANSWER = 'answer:submit';
 const LOCKED = 'answer:locked';
 const SCORES = 'score:update';
 const ROUND_END = 'round:end';
+const OVER = 'game:over';
+const RESTART = 'game:restart';
 const ERRORS = {
   NOT_FOUND: 'الغرفة مو موجودة', NAME_TAKEN: 'الاسم مأخوذ', NAME_INVALID: 'الاسم غير صالح',
   STARTED: 'اللعبة بدأت', FULL: 'الغرفة مليانة', NOT_HOST: 'البدء عند المضيف بس',
@@ -41,6 +43,7 @@ export default function usePlayerSession(navigate) {
   const mounted = useRef(false);
   const pending = useRef(false);
   const generation = useRef(0);
+  const reconnectAction = useRef(null);
   const clearError = useCallback(() => setError(''), []);
   const request = useCallback((event, payload) => new Promise((resolve) => {
     socket.timeout(6000).emit(event, payload, (timeout, response) => resolve(timeout ? null : response));
@@ -49,14 +52,16 @@ export default function usePlayerSession(navigate) {
   useEffect(() => {
     mounted.current = true;
     const epoch = ++generation.current;
+    let reconnectRequest = 0;
     async function reconnect() {
       setConnected(true);
       if (!identityRef.current) return;
+      const attempt = ++reconnectRequest;
       setReconnecting(true);
       const response = await request(REJOIN, identityRef.current);
-      if (!mounted.current || epoch !== generation.current) return;
+      if (!mounted.current || epoch !== generation.current || attempt !== reconnectRequest) return;
       setReconnecting(false);
-      if (!response) { setError('ما قدرنا نرجعك للغرفة. حاول مرة ثانية.'); return; }
+      if (!response) { setReconnecting(true); setError('ما قدرنا نرجعك للغرفة. حاول مرة ثانية.'); return; }
       if (!response.ok) {
         if (response.error === 'NOT_FOUND') {
           try { sessionStorage.removeItem('qaffelha'); } catch { /* Storage may be unavailable. */ }
@@ -68,8 +73,9 @@ export default function usePlayerSession(navigate) {
       roundRef.current = response.state.status === 'round' ? response.state.endsAt : null;
       setState(response.state); setError('');
     }
-    const disconnect = () => { roundRef.current = null; setConnected(false); setReconnecting(Boolean(identityRef.current)); };
-    const players = (payload) => setState((current) => ({ ...current, ...payload }));
+    const disconnect = () => { ++reconnectRequest; roundRef.current = null; setConnected(false); setReconnecting(Boolean(identityRef.current)); };
+    const players = (payload) => setState((current) => current.status === 'over' && payload.players.every((player) => !player.out)
+      ? { ...EMPTY, ...payload, scores: [], locked: [], me: null } : { ...current, ...payload });
     const countdown = (payload) => { roundRef.current = null; setFeedback(null); setState((current) => ({ ...current, ...payload, status: 'countdown' })); };
     const roundStart = (payload) => {
       roundRef.current = payload.endsAt; setFeedback(null);
@@ -85,17 +91,22 @@ export default function usePlayerSession(navigate) {
         me: current.me?.id === payload.eliminated.id ? { ...current.me, out: true } : current.me,
       }));
     };
+    const over = (payload) => { roundRef.current = null; setFeedback(null); setState((current) => ({ ...current, ...payload, status: 'over' })); };
     socket.on('connect', reconnect); socket.on('disconnect', disconnect);
     socket.on(PLAYERS, players); socket.on(COUNTDOWN, countdown);
     socket.on(ROUND_START, roundStart); socket.on(LOCKED, locked); socket.on(SCORES, scores);
     socket.on(ROUND_END, roundEnd);
+    socket.on(OVER, over);
+    reconnectAction.current = reconnect;
     if (socket.connected) reconnect();
     return () => {
       mounted.current = false; ++generation.current;
+      reconnectAction.current = null;
       socket.off('connect', reconnect); socket.off('disconnect', disconnect);
       socket.off(PLAYERS, players); socket.off(COUNTDOWN, countdown);
       socket.off(ROUND_START, roundStart); socket.off(LOCKED, locked); socket.off(SCORES, scores);
       socket.off(ROUND_END, roundEnd);
+      socket.off(OVER, over);
     };
   }, [navigate, request]);
 
@@ -137,5 +148,17 @@ export default function usePlayerSession(navigate) {
     // Scores are rendered from score:update. An older acknowledgement must not overwrite a newer broadcast.
   }
 
-  return { identity, state, connected, reconnecting, busy, error, clearError, join, start, offset, feedback, answer };
+  async function restart() {
+    if (pending.current) return;
+    pending.current = true; setBusy(true); setError('');
+    const response = await request(RESTART, { code: identityRef.current.code });
+    pending.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    if (!response?.ok) { setError(response ? 'إعادة اللعب عند المضيف بس' : 'ما وصلنا رد. حاول مرة ثانية.'); return; }
+    setState((current) => ({ ...current, status: 'lobby', me: null, locked: [], scores: [], eliminated: null, winner: null, ranking: [] }));
+  }
+
+  return { identity, state, connected, reconnecting, busy, error, clearError, join, start, offset, feedback, answer, restart,
+    retry: () => reconnectAction.current?.() };
 }

@@ -14,10 +14,10 @@ export default function LobbyScreen({ code, players, meId, hostId, isHost, onSta
       <details><summary>نسخ الرابط يدويًا</summary><div className="q-field"><label className="q-label" htmlFor="join-link">رابط الغرفة</label><input id="join-link" className="q-input q-ltr" readOnly value={joinUrl} onFocus={(event) => event.target.select()} /></div></details>
     </>}
     <h2 className="q-eyebrow">اللاعبين <span className="q-ltr">({players.length}/12)</span></h2>
-    <div className="q-player-list" aria-live="polite" aria-label="اللاعبين">
+    <div className="q-m-players" aria-live="polite" aria-label="اللاعبين">
       {players.map((player, index) => <span key={player.id} className={`q-player-chip ${player.id === meId ? 'is-me' : ''}`}>
         <span className={`q-avatar q-avatar--${index % 8 + 1}`} aria-hidden="true">{player.name[0]}</span>
-        <span>{player.name}{player.id === meId ? ' (أنت)' : ''}{!player.connected ? ' — انقطع اتصاله' : ''}</span>
+        <span className="q-score-row__name" title={player.name}>{player.name}{player.id === meId ? ' (أنت)' : ''}{!player.connected ? ' — انقطع اتصاله' : ''}</span>
         {player.id === hostId && <CrownIcon title="المضيف" />}
       </span>)}
     </div>
