@@ -8,6 +8,10 @@ const REJOIN = 'room:rejoin';
 const PLAYERS = 'room:players';
 const START = 'game:start';
 const COUNTDOWN = 'round:countdown';
+const ROUND_START = 'round:start';
+const ANSWER = 'answer:submit';
+const LOCKED = 'answer:locked';
+const SCORES = 'score:update';
 const ERRORS = {
   NOT_FOUND: 'الغرفة مو موجودة', NAME_TAKEN: 'الاسم مأخوذ', NAME_INVALID: 'الاسم غير صالح',
   STARTED: 'اللعبة بدأت', FULL: 'الغرفة مليانة', NOT_HOST: 'البدء عند المضيف بس',
@@ -30,6 +34,8 @@ export default function usePlayerSession(navigate) {
   const [reconnecting, setReconnecting] = useState(Boolean(identity));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState(null);
+  const roundRef = useRef(null);
   const offset = useRef(0);
   const mounted = useRef(false);
   const pending = useRef(false);
@@ -58,18 +64,28 @@ export default function usePlayerSession(navigate) {
         return;
       }
       offset.current = response.serverTime - Date.now();
+      roundRef.current = response.state.status === 'round' ? response.state.endsAt : null;
       setState(response.state); setError('');
     }
-    const disconnect = () => { setConnected(false); setReconnecting(Boolean(identityRef.current)); };
+    const disconnect = () => { roundRef.current = null; setConnected(false); setReconnecting(Boolean(identityRef.current)); };
     const players = (payload) => setState((current) => ({ ...current, ...payload }));
-    const countdown = (payload) => setState((current) => ({ ...current, ...payload, status: 'countdown' }));
+    const countdown = (payload) => { roundRef.current = null; setFeedback(null); setState((current) => ({ ...current, ...payload, status: 'countdown' })); };
+    const roundStart = (payload) => {
+      roundRef.current = payload.endsAt; setFeedback(null);
+      setState((current) => ({ ...current, ...payload, status: 'round', locked: [], scores: current.players.map(({ id }) => ({ id, score: 0 })) }));
+    };
+    const locked = (payload) => setState((current) => current.status === 'round'
+      ? { ...current, locked: [...(current.locked || []).filter((entry) => entry.word !== payload.word), payload] } : current);
+    const scores = (payload) => setState((current) => ({ ...current, scores: payload.scores }));
     socket.on('connect', reconnect); socket.on('disconnect', disconnect);
     socket.on(PLAYERS, players); socket.on(COUNTDOWN, countdown);
+    socket.on(ROUND_START, roundStart); socket.on(LOCKED, locked); socket.on(SCORES, scores);
     if (socket.connected) reconnect();
     return () => {
       mounted.current = false; ++generation.current;
       socket.off('connect', reconnect); socket.off('disconnect', disconnect);
       socket.off(PLAYERS, players); socket.off(COUNTDOWN, countdown);
+      socket.off(ROUND_START, roundStart); socket.off(LOCKED, locked); socket.off(SCORES, scores);
     };
   }, [navigate, request]);
 
@@ -100,5 +116,16 @@ export default function usePlayerSession(navigate) {
     if (!response?.ok) setError(response ? ERRORS[response.error] || 'ما قدرنا نبدأ' : 'ما وصلنا رد. حاول مرة ثانية.');
   }
 
-  return { identity, state, connected, reconnecting, busy, error, clearError, join, start, offset };
+  async function answer(text) {
+    const round = roundRef.current;
+    if (!round || !socket.connected || Date.now() + offset.current >= round) return;
+    const response = await request(ANSWER, { code: identityRef.current.code, text });
+    if (!mounted.current || round !== roundRef.current) return;
+    if (!response) { setError('ما وصلنا رد على إجابتك. تأكد من الاتصال.'); return; }
+    setError('');
+    setFeedback({ result: response.result, text, delta: response.delta, sequence: performance.now() });
+    // Scores are rendered from score:update. An older acknowledgement must not overwrite a newer broadcast.
+  }
+
+  return { identity, state, connected, reconnecting, busy, error, clearError, join, start, offset, feedback, answer };
 }
