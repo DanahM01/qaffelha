@@ -3,12 +3,15 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { socket } from '../socket.js';
 import HostLobby from './HostLobby.jsx';
-import { fakeCreateAck, startFakePlayers } from './fakeRoom.js';
+import Countdown from './Countdown.jsx';
+import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
 
 // Event names from EVENTS.md §1.
 const ROOM_CREATE = 'room:create';
 const ROOM_REJOIN = 'room:rejoin';
 const ROOM_PLAYERS = 'room:players';
+const GAME_START = 'game:start';
+const ROUND_COUNTDOWN = 'round:countdown';
 
 const STORE_KEY = 'qaffelha';
 const ACK_TIMEOUT_MS = 10000;
@@ -39,7 +42,13 @@ async function openRoom() {
   const saved = readSaved();
   if (saved) {
     const res = await request(ROOM_REJOIN, { code: saved.code, hostToken: saved.hostToken });
-    if (res.ok) return { code: saved.code, serverTime: res.serverTime, players: res.state.players };
+    if (res.ok) {
+      const { state } = res;
+      const countdown = state.status === 'countdown' ? { round: state.round, startsAt: state.startsAt } : null;
+      // round / roundEnd / over have no host screen yet (PB-04+): wait instead of showing a live «ابدأ».
+      const resuming = state.status !== 'lobby' && state.status !== 'countdown';
+      return { code: saved.code, serverTime: res.serverTime, players: state.players, countdown, resuming };
+    }
     if (res.error === 'NOT_FOUND') {
       writeSaved(null);
       return { notFound: true };
@@ -49,7 +58,7 @@ async function openRoom() {
   const res = await request(ROOM_CREATE, { mode: 'screen' });
   if (!res.ok) throw new Error(res.error);
   writeSaved({ code: res.code, hostToken: res.hostToken });
-  return { code: res.code, serverTime: res.serverTime, players: [] };
+  return { code: res.code, serverTime: res.serverTime, players: [], countdown: null, resuming: false };
 }
 
 export default function HostApp() {
@@ -58,12 +67,23 @@ export default function HostApp() {
   const fake = import.meta.env.DEV && params.get('fake') === '1';
 
   // Fake mode starts straight in the lobby so the connecting screen never flashes.
-  const [status, setStatus] = useState(() => (fake ? 'lobby' : 'connecting')); // connecting | lobby | error
+  const [status, setStatus] = useState(() => (fake ? 'lobby' : 'connecting')); // connecting | lobby | countdown | resuming | error
   const [code, setCode] = useState(() => (fake ? fakeCreateAck().code : ''));
   const [players, setPlayers] = useState([]);
+  const [countdown, setCountdown] = useState(null); // { round, startsAt } from round:countdown
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(null); // null | 'NOT_ENOUGH_PLAYERS' | 'FAILED'
   const [attempt, setAttempt] = useState(0);
   const pending = useRef(null); // one request per attempt, even when StrictMode runs the effect twice
-  const clockOffset = useRef(0); // serverTime - Date.now(), for the round timers (PB-04)
+  const clockOffset = useRef(0); // serverTime - Date.now(), for the countdown and round timers
+  const fakeRoom = useRef(null);
+
+  const showCountdown = (payload) => {
+    setCountdown({ round: payload.round, startsAt: payload.startsAt });
+    setStarting(false);
+    setStartError(null);
+    setStatus('countdown');
+  };
 
   useEffect(() => {
     if (fake) {
@@ -72,13 +92,16 @@ export default function HostApp() {
       setCode(ack.code);
       setPlayers([]);
       setStatus('lobby');
-      return startFakePlayers((payload) => setPlayers(payload.players));
+      fakeRoom.current = startFakeRoom({ onPlayers: (payload) => setPlayers(payload.players), onCountdown: showCountdown });
+      return () => fakeRoom.current.stop();
     }
 
     let active = true;
     setStatus('connecting');
     const onPlayers = (payload) => setPlayers(payload.players);
     socket.on(ROOM_PLAYERS, onPlayers);
+    // Listened to all the time: the server sends it again before every round.
+    socket.on(ROUND_COUNTDOWN, showCountdown);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -88,7 +111,8 @@ export default function HostApp() {
         clockOffset.current = room.serverTime - Date.now();
         setCode(room.code);
         setPlayers(room.players);
-        setStatus('lobby');
+        if (room.countdown) showCountdown(room.countdown);
+        else setStatus(room.resuming ? 'resuming' : 'lobby');
       })
       .catch(() => {
         if (active) setStatus('error');
@@ -97,8 +121,24 @@ export default function HostApp() {
     return () => {
       active = false;
       socket.off(ROOM_PLAYERS, onPlayers);
+      socket.off(ROUND_COUNTDOWN, showCountdown);
     };
   }, [fake, attempt, navigate]);
+
+  // «ابدأ»: on ok the server sends round:countdown, which switches the screen (EVENTS.md game:start).
+  const startGame = async () => {
+    if (starting) return;
+    setStarting(true);
+    setStartError(null);
+    try {
+      const res = fake ? fakeRoom.current.gameStart() : await request(GAME_START, { code });
+      if (res.ok) return;
+      setStartError(res.error === 'NOT_ENOUGH_PLAYERS' ? 'NOT_ENOUGH_PLAYERS' : 'FAILED');
+    } catch {
+      setStartError('FAILED');
+    }
+    setStarting(false);
+  };
 
   const retry = () => {
     pending.current = null;
@@ -108,10 +148,16 @@ export default function HostApp() {
 
   return (
     <div className="q-app">
-      {status === 'lobby' && <HostLobby code={code} players={players} />}
+      {status === 'lobby' && <HostLobby code={code} players={players} onStart={startGame} starting={starting} startError={startError} />}
+      {status === 'countdown' && <Countdown round={countdown.round} startsAt={countdown.startsAt} clockOffset={clockOffset.current} />}
       {status === 'connecting' && (
         <div className="q-screen-host q-center" style={{ justifyContent: 'center' }}>
           <div className="q-waiting" role="status"><span className="q-waiting__pulse" />نفتح الغرفة…</div>
+        </div>
+      )}
+      {status === 'resuming' && (
+        <div className="q-screen-host q-center" style={{ justifyContent: 'center' }}>
+          <div className="q-waiting" role="status"><span className="q-waiting__pulse" />نرجعك للعبة…</div>
         </div>
       )}
       {status === 'error' && (
