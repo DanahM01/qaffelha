@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { socket } from '../socket.js';
 import HostLobby from './HostLobby.jsx';
 import Countdown from './Countdown.jsx';
+import RoundScreen from './RoundScreen.jsx';
 import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
 
 // Event names from EVENTS.md §1.
@@ -12,6 +13,7 @@ const ROOM_REJOIN = 'room:rejoin';
 const ROOM_PLAYERS = 'room:players';
 const GAME_START = 'game:start';
 const ROUND_COUNTDOWN = 'round:countdown';
+const ROUND_START = 'round:start';
 
 const STORE_KEY = 'qaffelha';
 const ACK_TIMEOUT_MS = 10000;
@@ -45,9 +47,10 @@ async function openRoom() {
     if (res.ok) {
       const { state } = res;
       const countdown = state.status === 'countdown' ? { round: state.round, startsAt: state.startsAt } : null;
-      // round / roundEnd / over have no host screen yet (PB-04+): wait instead of showing a live «ابدأ».
-      const resuming = state.status !== 'lobby' && state.status !== 'countdown';
-      return { code: saved.code, serverTime: res.serverTime, players: state.players, countdown, resuming };
+      const roundInfo = state.status === 'round' ? { round: state.round, category: state.category, endsAt: state.endsAt } : null;
+      // roundEnd / over have no host screen yet: wait instead of showing a live «ابدأ».
+      const resuming = !['lobby', 'countdown', 'round'].includes(state.status);
+      return { code: saved.code, serverTime: res.serverTime, players: state.players, countdown, roundInfo, resuming };
     }
     if (res.error === 'NOT_FOUND') {
       writeSaved(null);
@@ -58,7 +61,7 @@ async function openRoom() {
   const res = await request(ROOM_CREATE, { mode: 'screen' });
   if (!res.ok) throw new Error(res.error);
   writeSaved({ code: res.code, hostToken: res.hostToken });
-  return { code: res.code, serverTime: res.serverTime, players: [], countdown: null, resuming: false };
+  return { code: res.code, serverTime: res.serverTime, players: [], countdown: null, roundInfo: null, resuming: false };
 }
 
 export default function HostApp() {
@@ -67,10 +70,11 @@ export default function HostApp() {
   const fake = import.meta.env.DEV && params.get('fake') === '1';
 
   // Fake mode starts straight in the lobby so the connecting screen never flashes.
-  const [status, setStatus] = useState(() => (fake ? 'lobby' : 'connecting')); // connecting | lobby | countdown | resuming | error
+  const [status, setStatus] = useState(() => (fake ? 'lobby' : 'connecting')); // connecting | lobby | countdown | round | resuming | error
   const [code, setCode] = useState(() => (fake ? fakeCreateAck().code : ''));
   const [players, setPlayers] = useState([]);
   const [countdown, setCountdown] = useState(null); // { round, startsAt } from round:countdown
+  const [roundInfo, setRoundInfo] = useState(null); // { round, category, endsAt } from round:start
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null); // null | 'NOT_ENOUGH_PLAYERS' | 'FAILED'
   const [attempt, setAttempt] = useState(0);
@@ -85,6 +89,11 @@ export default function HostApp() {
     setStatus('countdown');
   };
 
+  const showRound = (payload) => {
+    setRoundInfo({ round: payload.round, category: payload.category, endsAt: payload.endsAt });
+    setStatus('round');
+  };
+
   useEffect(() => {
     if (fake) {
       const ack = fakeCreateAck();
@@ -92,7 +101,7 @@ export default function HostApp() {
       setCode(ack.code);
       setPlayers([]);
       setStatus('lobby');
-      fakeRoom.current = startFakeRoom({ onPlayers: (payload) => setPlayers(payload.players), onCountdown: showCountdown });
+      fakeRoom.current = startFakeRoom({ onPlayers: (payload) => setPlayers(payload.players), onCountdown: showCountdown, onRoundStart: showRound });
       return () => fakeRoom.current.stop();
     }
 
@@ -102,6 +111,7 @@ export default function HostApp() {
     socket.on(ROOM_PLAYERS, onPlayers);
     // Listened to all the time: the server sends it again before every round.
     socket.on(ROUND_COUNTDOWN, showCountdown);
+    socket.on(ROUND_START, showRound);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -111,7 +121,8 @@ export default function HostApp() {
         clockOffset.current = room.serverTime - Date.now();
         setCode(room.code);
         setPlayers(room.players);
-        if (room.countdown) showCountdown(room.countdown);
+        if (room.roundInfo) showRound(room.roundInfo);
+        else if (room.countdown) showCountdown(room.countdown);
         else setStatus(room.resuming ? 'resuming' : 'lobby');
       })
       .catch(() => {
@@ -122,6 +133,7 @@ export default function HostApp() {
       active = false;
       socket.off(ROOM_PLAYERS, onPlayers);
       socket.off(ROUND_COUNTDOWN, showCountdown);
+      socket.off(ROUND_START, showRound);
     };
   }, [fake, attempt, navigate]);
 
@@ -150,6 +162,7 @@ export default function HostApp() {
     <div className="q-app">
       {status === 'lobby' && <HostLobby code={code} players={players} onStart={startGame} starting={starting} startError={startError} />}
       {status === 'countdown' && <Countdown round={countdown.round} startsAt={countdown.startsAt} clockOffset={clockOffset.current} />}
+      {status === 'round' && <RoundScreen round={roundInfo.round} category={roundInfo.category} endsAt={roundInfo.endsAt} clockOffset={clockOffset.current} />}
       {status === 'connecting' && (
         <div className="q-screen-host q-center" style={{ justifyContent: 'center' }}>
           <div className="q-waiting" role="status"><span className="q-waiting__pulse" />نفتح الغرفة…</div>
