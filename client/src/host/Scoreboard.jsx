@@ -21,7 +21,7 @@ function rankPlayers(players, scores) {
     .sort((a, b) => b.score - a.score);
 }
 
-export default function Scoreboard({ players, scores }) {
+export default function Scoreboard({ players, scores, title = 'نقاط الجولة' }) {
   const ranked = rankPlayers(players, scores);
   const compact = ranked.length >= COMPACT_FROM;
   const tile = compact ? TILE_COMPACT : undefined;
@@ -47,7 +47,7 @@ export default function Scoreboard({ players, scores }) {
 
   return (
     <div className="q-stack" style={{ gap: '0.6em', fontSize: 'var(--q-fs-tv-label)' }}>
-      <span className="q-tv-label" style={{ color: 'var(--q-text)' }}>نقاط الجولة</span>
+      <span className="q-tv-label" style={{ color: 'var(--q-text)' }}>{title}</span>
       <div className="q-flap q-flap--v2" style={compact ? { ...BOARD_FIT, ...BOARD_COMPACT } : BOARD_FIT}>
         {ranked.map((p, i) => (
           <div key={p.id} className={`q-flap__row ${rowClass(p)}`}>

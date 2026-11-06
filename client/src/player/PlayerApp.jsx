@@ -33,7 +33,7 @@ export default function PlayerApp() {
       }
     } catch (error) {
       if (error.name !== "AbortError")
-        setSharingError("ما قدرنا نشارك الرابط. انسخه من الحقل تحت.");
+        setSharingError("ما قدرنا نشارك الرابط. خلهم يكتبون الكود.");
     }
   }
 
