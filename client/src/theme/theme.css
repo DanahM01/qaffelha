@@ -1692,6 +1692,16 @@ body {
   white-space: nowrap;
 }
 .q-m-ticket--red { background: var(--q-locked); color: var(--q-locked-ink); }
+/* Home tagline: no box, cream text with an ink stack like the logo. */
+.q-home .q-home__ticket {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  color: var(--q-cream-100);
+  text-shadow: -2px 2px 0 var(--q-ink-900), -4px 4px 0 var(--q-stack-3);
+  rotate: 0deg;
+}
 
 /* رابط نصي */
 .q-m-link {
