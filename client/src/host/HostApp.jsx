@@ -14,6 +14,8 @@ const ROOM_PLAYERS = 'room:players';
 const GAME_START = 'game:start';
 const ROUND_COUNTDOWN = 'round:countdown';
 const ROUND_START = 'round:start';
+const ANSWER_LOCKED = 'answer:locked';
+const SCORE_UPDATE = 'score:update';
 
 const STORE_KEY = 'qaffelha';
 const ACK_TIMEOUT_MS = 10000;
@@ -47,7 +49,10 @@ async function openRoom() {
     if (res.ok) {
       const { state } = res;
       const countdown = state.status === 'countdown' ? { round: state.round, startsAt: state.startsAt } : null;
-      const roundInfo = state.status === 'round' ? { round: state.round, category: state.category, endsAt: state.endsAt } : null;
+      // state.locked arrives oldest first; the wall shows newest first.
+      const roundInfo = state.status === 'round'
+        ? { round: state.round, category: state.category, endsAt: state.endsAt, locked: [...state.locked].reverse(), scores: state.scores }
+        : null;
       // roundEnd / over have no host screen yet: wait instead of showing a live «ابدأ».
       const resuming = !['lobby', 'countdown', 'round'].includes(state.status);
       return { code: saved.code, serverTime: res.serverTime, players: state.players, countdown, roundInfo, resuming };
@@ -75,6 +80,8 @@ export default function HostApp() {
   const [players, setPlayers] = useState([]);
   const [countdown, setCountdown] = useState(null); // { round, startsAt } from round:countdown
   const [roundInfo, setRoundInfo] = useState(null); // { round, category, endsAt } from round:start
+  const [locked, setLocked] = useState([]); // [{ word, by: { id, name } }], newest first
+  const [scores, setScores] = useState([]); // [{ id, score }] from score:update; a missing id means 0
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null); // null | 'NOT_ENOUGH_PLAYERS' | 'FAILED'
   const [attempt, setAttempt] = useState(0);
@@ -94,6 +101,16 @@ export default function HostApp() {
     setStatus('round');
   };
 
+  // Live round:start: every score is 0 and the locked list is empty (EVENTS.md).
+  const startRound = (payload) => {
+    setLocked([]);
+    setScores([]);
+    showRound(payload);
+  };
+
+  const addLocked = (payload) => setLocked((words) => [{ word: payload.word, by: payload.by }, ...words]);
+  const updateScores = (payload) => setScores(payload.scores);
+
   useEffect(() => {
     if (fake) {
       const ack = fakeCreateAck();
@@ -101,7 +118,13 @@ export default function HostApp() {
       setCode(ack.code);
       setPlayers([]);
       setStatus('lobby');
-      fakeRoom.current = startFakeRoom({ onPlayers: (payload) => setPlayers(payload.players), onCountdown: showCountdown, onRoundStart: showRound });
+      fakeRoom.current = startFakeRoom({
+        onPlayers: (payload) => setPlayers(payload.players),
+        onCountdown: showCountdown,
+        onRoundStart: startRound,
+        onLocked: addLocked,
+        onScores: updateScores,
+      });
       return () => fakeRoom.current.stop();
     }
 
@@ -111,7 +134,9 @@ export default function HostApp() {
     socket.on(ROOM_PLAYERS, onPlayers);
     // Listened to all the time: the server sends it again before every round.
     socket.on(ROUND_COUNTDOWN, showCountdown);
-    socket.on(ROUND_START, showRound);
+    socket.on(ROUND_START, startRound);
+    socket.on(ANSWER_LOCKED, addLocked);
+    socket.on(SCORE_UPDATE, updateScores);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -121,7 +146,11 @@ export default function HostApp() {
         clockOffset.current = room.serverTime - Date.now();
         setCode(room.code);
         setPlayers(room.players);
-        if (room.roundInfo) showRound(room.roundInfo);
+        if (room.roundInfo) {
+          setLocked(room.roundInfo.locked);
+          setScores(room.roundInfo.scores);
+          showRound(room.roundInfo);
+        }
         else if (room.countdown) showCountdown(room.countdown);
         else setStatus(room.resuming ? 'resuming' : 'lobby');
       })
@@ -133,7 +162,9 @@ export default function HostApp() {
       active = false;
       socket.off(ROOM_PLAYERS, onPlayers);
       socket.off(ROUND_COUNTDOWN, showCountdown);
-      socket.off(ROUND_START, showRound);
+      socket.off(ROUND_START, startRound);
+      socket.off(ANSWER_LOCKED, addLocked);
+      socket.off(SCORE_UPDATE, updateScores);
     };
   }, [fake, attempt, navigate]);
 
@@ -162,7 +193,17 @@ export default function HostApp() {
     <div className="q-app">
       {status === 'lobby' && <HostLobby code={code} players={players} onStart={startGame} starting={starting} startError={startError} />}
       {status === 'countdown' && <Countdown round={countdown.round} startsAt={countdown.startsAt} clockOffset={clockOffset.current} />}
-      {status === 'round' && <RoundScreen round={roundInfo.round} category={roundInfo.category} endsAt={roundInfo.endsAt} clockOffset={clockOffset.current} />}
+      {status === 'round' && (
+        <RoundScreen
+          round={roundInfo.round}
+          category={roundInfo.category}
+          endsAt={roundInfo.endsAt}
+          clockOffset={clockOffset.current}
+          locked={locked}
+          players={players}
+          scores={scores}
+        />
+      )}
       {status === 'connecting' && (
         <div className="q-screen-host q-center" style={{ justifyContent: 'center' }}>
           <div className="q-waiting" role="status"><span className="q-waiting__pulse" />نفتح الغرفة…</div>
