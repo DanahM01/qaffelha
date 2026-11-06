@@ -643,14 +643,14 @@ body {
   padding: 0.05em 0.25em;
   background: var(--q-timer-led-bg);
   border: var(--q-line) solid var(--_c);
-  color: var(--q-timer-led);
+  color: var(--_c);
   font-family: var(--q-font-led);
   font-size: var(--q-fs-xl);
   font-weight: var(--q-fw-black);
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
-  text-shadow: 0 0 10px var(--q-timer-led);
+  text-shadow: 0 0 10px var(--_c);
   direction: ltr;
 }
 .q-timer.is-danger .q-timer__num { animation: q-blink 1s steps(1) infinite; }
@@ -1692,6 +1692,16 @@ body {
   white-space: nowrap;
 }
 .q-m-ticket--red { background: var(--q-locked); color: var(--q-locked-ink); }
+/* Home tagline: no box, cream text with an ink stack like the logo. */
+.q-home .q-home__ticket {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  color: var(--q-cream-100);
+  text-shadow: -2px 2px 0 var(--q-ink-900), -4px 4px 0 var(--q-stack-3);
+  rotate: 0deg;
+}
 
 /* رابط نصي */
 .q-m-link {
@@ -1901,6 +1911,7 @@ body {
 .q-m-dock .q-input--answer { min-height: 62px; font-size: var(--q-fs-xl); }
 .q-m-dock .q-answer-bar .q-btn { min-height: 62px; padding: 0 var(--q-space-4); }
 .q-m-dock .q-answer-bar .q-btn svg { rotate: 0deg; }
+.q-m-dock .q-answer-bar .q-btn:disabled { --_bg: color-mix(in srgb, var(--q-primary) 18%, var(--q-panel)); --_fg: var(--q-primary); border-color: color-mix(in srgb, var(--q-primary) 60%, transparent); }
 .q-m-toast {
   position: absolute;
   inset-inline: 0;
@@ -1908,9 +1919,9 @@ body {
   padding-block: var(--q-space-2);
   rotate: -1.5deg;
   pointer-events: none;
-  animation: q-pop 320ms var(--q-ease-bounce) both, q-m-toast-out 400ms ease-in 2.4s forwards;
+  animation: q-pop 320ms var(--q-ease-bounce) both, q-m-toast-out 300ms ease-in 1.6s forwards;
 }
-.q-m-toast.q-feedback--locked { animation: q-pop 320ms var(--q-ease-bounce) both, q-shake 420ms 120ms both, q-m-toast-out 400ms ease-in 2.4s forwards; }
+.q-m-toast.q-feedback--locked { animation: q-pop 320ms var(--q-ease-bounce) both, q-shake 420ms 120ms both, q-m-toast-out 300ms ease-in 1.6s forwards; }
 .q-m-toast .q-feedback__pts { font-size: var(--q-fs-2xl); }
 @keyframes q-m-toast-out { to { opacity: 0; transform: translateY(8px); } }
 .q-m-dock .q-spectate { min-height: 62px; background: var(--q-panel); }
@@ -2310,4 +2321,9 @@ body {
   .q-home__btn--big:hover { --_bg: var(--q-primary-hover); }
   .q-home__btn--join { --_bg: var(--q-surface-ink); --_fg: var(--q-primary); width: auto; min-height: 0; padding: 0.35em 1.1em; font-size: var(--q-fs-tv-label); }
   .q-home__btn--join:hover { --_bg: var(--q-surface-ink); }
+}
+
+/* Laptops and desktops: the player column is wider so the screen does not look empty. */
+@media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+  :root { --q-player-max: 600px; }
 }
