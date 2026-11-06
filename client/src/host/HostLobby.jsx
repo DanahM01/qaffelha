@@ -7,7 +7,13 @@ const MIN_PLAYERS = 3;
 const SLOTS = 6;
 const AR = (n) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]);
 
-export default function HostLobby({ code, players }) {
+const START_ERRORS = {
+  NOT_ENOUGH_PLAYERS: `تحتاجون ${AR(MIN_PLAYERS)} لاعبين على الأقل`,
+  FAILED: 'ما قدرنا نبدأ اللعبة، جرّب مرة ثانية',
+};
+
+// startError: null | 'NOT_ENOUGH_PLAYERS' | 'FAILED' (set by HostApp from the game:start ack).
+export default function HostLobby({ code, players, onStart, starting = false, startError = null }) {
   const ready = players.length >= MIN_PLAYERS;
   const slots = Math.max(0, SLOTS - players.length);
   const joinUrl = `${window.location.origin}/play/${code}`;
@@ -67,9 +73,17 @@ export default function HostLobby({ code, players }) {
           </div>
         </div>
         <div className="q-start">
-          {/* Sending game:start is PB-03; here the button only follows the player count. */}
-          <button type="button" className="q-btn q-btn--primary q-btn--tv" disabled={!ready}>ابدأ</button>
-          <span className="q-start__note">{ready ? 'جاهزين؟' : `تحتاجون ${AR(MIN_PLAYERS)} لاعبين على الأقل`}</span>
+          {startError && <div className="q-alert" role="alert" style={{ fontSize: 'var(--q-fs-tv-label)' }}>{START_ERRORS[startError]}</div>}
+          <button
+            type="button"
+            className={`q-btn q-btn--primary q-btn--tv ${starting ? 'is-loading' : ''}`}
+            disabled={!ready || starting}
+            aria-busy={starting}
+            onClick={onStart}
+          >
+            ابدأ
+          </button>
+          <span className="q-start__note">{ready ? 'جاهزين؟' : START_ERRORS.NOT_ENOUGH_PLAYERS}</span>
         </div>
       </div>
     </div>
