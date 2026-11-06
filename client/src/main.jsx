@@ -7,6 +7,8 @@ import { PaintFilters } from './theme/Logo.jsx';
 import { Home } from './theme/Home.jsx';
 import HostApp from './host/HostApp.jsx';
 import PlayerApp from './player/PlayerApp.jsx';
+import SoundToggle from './theme/SoundToggle.jsx';
+import './theme/sound.js';
 
 // Design references (SPEC §6.1) — loaded only when someone opens them, not part of the product.
 const Preview = lazy(() => import('./theme/Preview.jsx'));
@@ -22,6 +24,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <PaintFilters />
     <BrowserRouter>
+      <SoundToggle />
       <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<HomePage />} />
