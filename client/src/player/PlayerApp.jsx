@@ -9,6 +9,9 @@ import CountdownScreen from "./CountdownScreen.jsx";
 import RoundScreen from "./RoundScreen.jsx";
 import RoundEndScreen from "./RoundEndScreen.jsx";
 import ResultsScreen from "./ResultsScreen.jsx";
+import TeamBadge from './TeamBadge.jsx';
+import TeamResultsScreen from './TeamResultsScreen.jsx';
+import TeamBoardScreen from './TeamBoardScreen.jsx';
 
 export default function PlayerApp() {
   const location = useLocation();
@@ -38,9 +41,10 @@ export default function PlayerApp() {
   }
 
   const round = session.identity && session.state.status === "round";
+  const teams = session.identity && session.state.gameMode === 'teams';
   return (
     <main className="q-app" dir="rtl" lang="ar">
-      <div className={round ? "q-home q-m q-m-round" : "q-screen-player"}>
+      <div className={round ? "q-home q-m q-m-round" : teams && session.state.status !== 'lobby' ? 'q-screen-player q-team-screen' : "q-screen-player"}>
         {(session.reconnecting || !session.connected) && (
           <p className="q-alert q-alert--info" role="status">
             {session.identity ? "نرجعك للعبة…" : "جاري الاتصال…"}
@@ -53,6 +57,7 @@ export default function PlayerApp() {
         )}
         {session.identity ? (
           <>
+            {session.state.gameMode === 'teams' && session.state.status !== 'over' && <TeamBadge state={session.state} meId={session.identity.playerId} />}
             {session.state.status === "lobby" ? (
               <LobbyScreen
                 code={session.identity.code}
@@ -67,6 +72,9 @@ export default function PlayerApp() {
                 }
                 message={sharingError}
               />
+            ) : teams && ['turn', 'cardWindow', 'battleEnd'].includes(session.state.status) ? (
+              <TeamBoardScreen state={session.state} meId={session.identity.playerId} offset={session.offset}
+                busy={session.busy || session.reconnecting || !session.connected} onChoose={session.chooseSquare} />
             ) : session.state.status === "countdown" ? (
               <CountdownScreen state={session.state} offset={session.offset} />
             ) : round ? (
@@ -85,7 +93,8 @@ export default function PlayerApp() {
                 meId={session.identity.playerId}
               />
             ) : session.state.status === "over" ? (
-              <ResultsScreen
+              session.state.gameMode === 'teams' ? <TeamResultsScreen state={session.state} meId={session.identity.playerId}
+                isHost={isHost} busy={session.busy || session.reconnecting || !session.connected} onAgain={session.restart} /> : <ResultsScreen
                 state={session.state}
                 meId={session.identity.playerId}
                 isHost={isHost}

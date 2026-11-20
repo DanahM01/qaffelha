@@ -1,6 +1,7 @@
 // Owner: Reef. Only sends documented intents; game decisions belong to the server.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { socket } from "../socket.js";
+import { TEAM_EVENTS, applyTeamEvent } from './teamState.js';
 
 const CREATE = "room:create";
 const JOIN = "room:join";
@@ -15,6 +16,7 @@ const SCORES = "score:update";
 const ROUND_END = "round:end";
 const OVER = "game:over";
 const RESTART = "game:restart";
+const CHOOSE = 'square:choose';
 const ERRORS = {
   NOT_FOUND: "الغرفة مو موجودة",
   NAME_TAKEN: "الاسم مأخوذ",
@@ -117,7 +119,7 @@ export default function usePlayerSession(navigate) {
     };
     const players = (payload) =>
       setState((current) =>
-        current.status === "over" &&
+        current.gameMode !== 'teams' && current.status === "over" &&
         payload.players.every((player) => !player.out)
           ? { ...EMPTY, ...payload, scores: [], locked: [], me: null }
           : { ...current, ...payload },
@@ -153,7 +155,8 @@ export default function usePlayerSession(navigate) {
           : current,
       );
     const scores = (payload) =>
-      setState((current) => ({ ...current, scores: payload.scores }));
+      setState((current) => ({ ...current, scores: payload.scores,
+        ...(payload.teamScores ? { teamScores: payload.teamScores } : {}) }));
     const roundEnd = (payload) => {
       roundRef.current = null;
       setFeedback(null);
@@ -186,6 +189,17 @@ export default function usePlayerSession(navigate) {
     socket.on(SCORES, scores);
     socket.on(ROUND_END, roundEnd);
     socket.on(OVER, over);
+    const teamListeners = Object.values(TEAM_EVENTS).map((event) => {
+      const listener = (payload) => {
+        if (event === TEAM_EVENTS.end || event === TEAM_EVENTS.turn || event === TEAM_EVENTS.chosen) {
+          roundRef.current = null;
+          setFeedback(null);
+        }
+        setState((current) => applyTeamEvent(current, event, payload));
+      };
+      socket.on(event, listener);
+      return [event, listener];
+    });
     reconnectAction.current = reconnect;
     if (socket.connected) reconnect();
     return () => {
@@ -201,6 +215,7 @@ export default function usePlayerSession(navigate) {
       socket.off(SCORES, scores);
       socket.off(ROUND_END, roundEnd);
       socket.off(OVER, over);
+      teamListeners.forEach(([event, listener]) => socket.off(event, listener));
     };
   }, [navigate, request]);
 
@@ -311,6 +326,19 @@ export default function usePlayerSession(navigate) {
     }));
   }
 
+  async function chooseSquare(squareId, options = {}) {
+    if (pending.current || !socket.connected) return;
+    pending.current = true; setBusy(true); setError('');
+    const response = await request(CHOOSE, { code: identityRef.current.code, squareId, ...(options.steal ? { steal: true } : {}) });
+    pending.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    if (!response?.ok) {
+      const messages = { NOT_YOUR_TURN: 'مو دور فريقك', TAKEN: 'المربع مأخوذ', NO_CARD: 'بطاقة السرقة مستخدمة', BAD_TARGET: 'اختار مربع متاح', SITTING_OUT: 'أنت تختار بطاقة فريقك هالجولة' };
+      setError(response ? messages[response.error] || 'ما قدرنا نختار المربع' : 'ما وصلنا رد. حاول مرة ثانية.');
+    }
+  }
+
   return {
     identity,
     state,
@@ -325,6 +353,7 @@ export default function usePlayerSession(navigate) {
     feedback,
     answer,
     restart,
+    chooseSquare,
     retry: () => reconnectAction.current?.(),
   };
 }

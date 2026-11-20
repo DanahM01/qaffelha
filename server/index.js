@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { MongoClient } from 'mongodb';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, stateSnapshot } from './game.js';
+  playersPayload, scoresPayload, stateSnapshot, teamGameResult } from './game.js';
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -16,6 +16,19 @@ const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin:
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const payloadObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const roomCode = (value) => typeof value === 'string' && /^[A-Za-z]{4}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
+
+// Reef / PB-15. PB-14 calls this after settling a battle and its card effects,
+// before scheduling another turn. Returns true when no next turn should run.
+export function completeTeamGame(io, rooms, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameMode !== 'teams') return false;
+  if (room.status === 'over') return true;
+  const result = teamGameResult(room.board, room.teamPoints, room.cards);
+  if (!result) return false;
+  rooms.set(code, { ...room, status: 'over', teamResult: result });
+  io.to(code).emit(EVENTS.over, result);
+  return true;
+}
 
 export function attachGameHandlers(io, { categories, now = Date.now, schedule = setTimeout,
   cancel = clearTimeout, random = Math.random, log = console.log,

@@ -144,3 +144,38 @@ export function stateSnapshot(room, playerId) {
       by: { id: byId, name: room.players.get(byId).name } })),
     me: player ? { id: player.id, out: player.out, score: player.score } : null };
 }
+
+// Reef / PB-15. Board identity is square.id, not array order.
+function validTeamBoard(board) {
+  return Array.isArray(board) && board.length === 16 &&
+    new Set(board.map((square) => square?.id)).size === 16 &&
+    board.every((square) => Number.isInteger(square?.id) && square.id >= 0 && square.id < 16 &&
+      [null, 'A', 'B'].includes(square.owner));
+}
+
+export function findWinningLine(board) {
+  if (!validTeamBoard(board)) return null;
+  const owners = new Map(board.map(({ id, owner }) => [id, owner]));
+  const lines = Array.from({ length: 4 }, (_, row) => Array.from({ length: 4 }, (_, col) => row * 4 + col))
+    .concat(Array.from({ length: 4 }, (_, col) => Array.from({ length: 4 }, (_, row) => row * 4 + col)));
+  for (const line of lines) {
+    const team = owners.get(line[0]);
+    if (team && line.every((id) => owners.get(id) === team)) return { team, line };
+  }
+  return null;
+}
+
+export function teamGameResult(board, teamPoints = { A: 0, B: 0 }, cards = {}) {
+  if (!validTeamBoard(board)) return null;
+  const squares = { A: 0, B: 0 };
+  for (const square of board) if (square.owner) squares[square.owner]++;
+  const points = { A: teamPoints.A ?? 0, B: teamPoints.B ?? 0 };
+  const winning = findWinningLine(board);
+  if (winning) return { winnerTeam: winning.team, line: winning.line, squares, teamPoints: points };
+  if (board.some((square) => square.owner === null)) return null;
+  // A full board is not final while either team can still steal an opposing square.
+  if ((cards.A?.steal > 0 && squares.B > 0) || (cards.B?.steal > 0 && squares.A > 0)) return null;
+  const difference = squares.A - squares.B || points.A - points.B;
+  return { winnerTeam: difference > 0 ? 'A' : difference < 0 ? 'B' : null,
+    line: null, squares, teamPoints: points };
+}
