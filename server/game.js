@@ -127,8 +127,10 @@ export function restartRoom(room) {
 }
 
 export function playersPayload(room) {
-  return { mode: room.mode, hostId: room.hostId,
-    players: [...room.players.values()].map(({ id, name, out, connected }) => ({ id, name, out, connected })) };
+  return { mode: room.mode, hostId: room.hostId, status: room.status,
+    ...(room.gameMode === 'teams' ? { gameMode: 'teams' } : {}),
+    players: [...room.players.values()].map(({ id, name, out, connected, team }) => ({ id, name, out, connected,
+      ...(room.gameMode === 'teams' ? { team: team ?? null } : {}) })) };
 }
 
 export function scoresPayload(room) {
@@ -143,4 +145,49 @@ export function stateSnapshot(room, playerId) {
     locked: [...room.locked.values()].map(({ word, byId }) => ({ word,
       by: { id: byId, name: room.players.get(byId).name } })),
     me: player ? { id: player.id, out: player.out, score: player.score } : null };
+}
+
+// PB-28: allowlist the state needed to restore a screen; never serialize the room itself.
+export function rejoinSnapshot(room, playerId, now) {
+  const state = stateSnapshot(room, playerId);
+  if (room.gameMode !== 'teams') {
+    if (room.status === 'roundEnd') {
+      const eliminated = room.players.get(room.eliminatedOrder.at(-1));
+      state.eliminated = eliminated ? { id: eliminated.id, name: eliminated.name } : null;
+    }
+    if (room.status === 'over') {
+      state.ranking = gameRanking(room);
+      const winner = state.ranking[0];
+      state.winner = winner ? { id: winner.id, name: winner.name } : null;
+    }
+    return state;
+  }
+
+  // These fields follow EVENTS.md §6.3; PB-14 supplies the team engine.
+  const player = room.players.get(playerId);
+  const team = player?.team === 'A' || player?.team === 'B' ? player.team : null;
+  const sitout = { A: room.sitout?.A ?? null, B: room.sitout?.B ?? null };
+  state.gameMode = 'teams';
+  state.players = state.players.map(entry => ({ ...entry, team: room.players.get(entry.id).team ?? null }));
+  state.board = (room.board ?? []).map(square => ({ id: square.id,
+    category: { id: square.category.id, title: square.category.title }, owner: square.owner ?? null }));
+  state.mines = team ? (room.board ?? []).filter(square => square.mine === team).map(square => square.id) : [];
+  state.turn = room.turn ? { team: room.turn.team, endsAt: room.turn.endsAt } : null;
+  state.chosen = room.chosen ? { squareId: room.chosen.squareId, team: room.chosen.team,
+    steal: Boolean(room.chosen.steal), lockedBy: room.chosen.lockedBy ?? null } : null;
+  state.cardWindowEndsAt = room.cardWindowEndsAt ?? room.chosen?.cardWindowEndsAt ?? null;
+  state.cards = Object.fromEntries(['A', 'B'].map(id => [id,
+    Object.fromEntries(['freeze', 'lock', 'mine', 'steal'].map(card => [card, room.cards?.[id]?.[card] ?? 0]))]));
+  state.teamPoints = { A: room.teamPoints?.A ?? 0, B: room.teamPoints?.B ?? 0 };
+  state.sitout = sitout;
+  state.frozenUntil = player?.frozenUntil > now ? player.frozenUntil : null;
+  state.me = player ? { id: player.id, team, out: player.out, score: player.score,
+    sittingOut: team !== null && sitout[team] === player.id } : null;
+  if (room.status === 'over' && room.gameOver) {
+    const result = room.gameOver;
+    state.winnerTeam = result.winnerTeam;
+    state.line = result.line ? [...result.line] : null;
+    state.squares = { A: result.squares.A, B: result.squares.B };
+  }
+  return state;
 }

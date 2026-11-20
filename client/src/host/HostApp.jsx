@@ -9,6 +9,7 @@ import RoundScreen from './RoundScreen.jsx';
 import RoundEnd from './RoundEnd.jsx';
 import Results from './Results.jsx';
 import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
+import { restoreHostSnapshot } from './restoreHostSnapshot.js';
 
 // Event names from EVENTS.md §1.
 const ROOM_CREATE = 'room:create';
@@ -53,15 +54,7 @@ async function openRoom() {
   if (saved) {
     const res = await request(ROOM_REJOIN, { code: saved.code, hostToken: saved.hostToken });
     if (res.ok) {
-      const { state } = res;
-      const countdown = state.status === 'countdown' ? { round: state.round, startsAt: state.startsAt } : null;
-      // state.locked arrives oldest first; the wall shows newest first.
-      const roundInfo = state.status === 'round'
-        ? { round: state.round, category: state.category, endsAt: state.endsAt, locked: [...state.locked].reverse(), scores: state.scores }
-        : null;
-      // roundEnd / over have no host screen yet: wait instead of showing a live «ابدأ».
-      const resuming = !['lobby', 'countdown', 'round'].includes(state.status);
-      return { code: saved.code, serverTime: res.serverTime, players: state.players, countdown, roundInfo, resuming };
+      return { code: saved.code, serverTime: res.serverTime, ...restoreHostSnapshot(res.state) };
     }
     if (res.error === 'NOT_FOUND') {
       writeSaved(null);
@@ -182,6 +175,8 @@ export default function HostApp() {
           showRound(room.roundInfo);
         }
         else if (room.countdown) showCountdown(room.countdown);
+        else if (room.roundEnd) { setRoundEnd(room.roundEnd); setStatus('roundEnd'); }
+        else if (room.gameOver) endGame(room.gameOver);
         else setStatus(room.resuming ? 'resuming' : 'lobby');
       })
       .catch(() => {

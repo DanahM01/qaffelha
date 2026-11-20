@@ -36,7 +36,10 @@ Changing a name or a payload = tell everyone first and update this file **in the
   mode, hostId, players: [{ id, name, out, connected }],
   round, category: { id, title } | null, startsAt, endsAt,
   locked: [{ word, by: { id, name } }], scores: [{ id, score }],
-  me: { id, out, score } | null }   // null for the screen-mode host
+  me: { id, out, score } | null,
+  eliminated?: { id, name } | null, // present during roundEnd
+  winner?: { id, name } | null,     // present during over
+  ranking?: [{ id, name, place }] } // present during over; me is null for the screen-mode host
 ```
 
 ### Team Mode (Sprint 2 — rules in SPEC §17)
@@ -95,7 +98,7 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
 | Event | Change |
 |---|---|
 | `game:start` | Payload `{ code, gameMode: 'classic' \| 'teams' }` (default `classic`; not `mode`, which is `screen`/`phone`). Teams: error `NOT_ENOUGH_PLAYERS` if < 4 players or < 2 per team |
-| `room:players` | Also `gameMode`, and each player has `team: 'A' \| 'B' \| null` |
+| `room:players` | Also `gameMode`, and each player has `team: 'A' \| 'B' \| null`. Both modes include `status` so a return to `lobby` is explicit, not inferred from elimination flags |
 | `round:start` | In teams mode also `{ squareId, lockedBy: 'A' \| 'B' \| null }` |
 | `answer:submit` | Extra results: `frozen` (0, you are frozen), `closed` also when you sit out. Lock bonus: `delta` is `+2` for the locking team |
 | `score:update` | In teams mode also `{ teamScores: { A, B } }` (this battle) |
@@ -128,12 +131,19 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
   mines: [squareId],              // only my team's
   turn: { team, endsAt } | null,
   chosen: { squareId, team, steal, lockedBy } | null,
+  cardWindowEndsAt: number | null, // restore the existing card window without starting a new one
   cards: { A: { freeze, lock, mine, steal }, B: { … } },
   teamPoints: { A, B },
   sitout: { A: id | null, B: id | null },
   frozenUntil: number | null,     // for me
   me: { id, team, score, sittingOut } | null }
 ```
+
+PB-28 snapshot integration: the team engine provides `board`, `turn`, `chosen`, `cards`,
+`teamPoints`, `sitout` and each player's `team` and `frozenUntil`. Retain the card-window
+deadline as `room.cardWindowEndsAt` (or `room.chosen.cardWindowEndsAt`). Retain the
+team `game:over` payload as `room.gameOver`; when the status is `over`, rejoin also
+returns `winnerTeam`, `line` and `squares` from that result. No game rules run on rejoin.
 
 ### 6.4 Who listens to what (teams mode)
 | Event | Big screen | Phone |

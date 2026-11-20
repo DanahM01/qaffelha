@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { MongoClient } from 'mongodb';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, stateSnapshot } from './game.js';
+  playersPayload, scoresPayload, rejoinSnapshot } from './game.js';
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -169,7 +169,8 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       const screenHost = room?.mode === 'screen' && typeof input.hostToken === 'string' && input.hostToken === room.hostToken;
       if (!room || (!player && !screenHost)) return ack({ ok: false, error: 'NOT_FOUND' });
       bind(socket, room, player);
-      ack({ ok: true, state: stateSnapshot(room, player?.id), serverTime: now() });
+      const serverTime = now();
+      ack({ ok: true, state: rejoinSnapshot(room, player?.id, serverTime), serverTime });
       publishPlayers(room);
     });
     handle(EVENTS.start, (input, ack) => {
