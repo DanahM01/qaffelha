@@ -7,7 +7,7 @@ Other files you must also follow:
 - **`client/src/theme/FLOW.md`** + `/flow` and `/preview` pages — the approved designs of each screen.
 - **`EVENTS.md`** — the exact Socket.IO contract.
 
-Scope of this version: **Sprint 1 (19 Oct – 1 Nov 2026) — Speed Battle**. Sprint 2 items are listed in §17 only so you don't design them out; do not build them.
+Scope of this version: **Sprint 1 (19 Oct – 1 Nov 2026) — Speed Battle** (done, §0–§16) and **Sprint 2 (8 – 21 Nov 2026) — Team Mode** (§17). Everything in §0–§16 still applies to Team Mode unless §17 says otherwise. Who builds what in Sprint 2: `docs/TASKS.md`.
 
 **How to use this file:** read §0–§2 once to understand the stack, the product and the full flow, then the sections for the part you are building (server: §3–§5, §10; screens: §2.3, §6–§9). Before opening a PR, go through §12 and §15.
 
@@ -397,8 +397,105 @@ The exact contract is [`../EVENTS.md`](../EVENTS.md) (owner Layan). The server v
 - [ ] No secrets in the diff (`.env`, `mongodb+srv://`, passwords, keys, tokens); only `*.env.example` with fake values.
 - [ ] PR description lists the PB key, what changed, and screenshots of a phone size and a wide size.
 
-## 16. Out of scope for Sprint 1
-Accounts, chat, sound effects, custom categories, teams, board, cards, multiple languages.
+## 16. Out of scope (Sprint 1 and Sprint 2)
+Accounts, stats and leaderboard (PB-22), custom categories (PB-23), extra animations (PB-21), chat, multiple languages. Sound effects were added in Sprint 1 (PB-25).
 
-## 17. Sprint 2 preview (do not build)
-Two teams; a 4×4 board of category squares; each square is won by a speed battle between the teams; first team with a full row or column wins. Cards: **Freeze** (opponent can't type for 3 s), **Lock** (a square becomes harder), **Mine** (a square that costs the loser points), **Steal** (take a square from the other team). Colors are already in BRAND.md §7.
+## 17. Sprint 2 — Team Mode (8 – 21 Nov 2026)
+
+Classic mode (§2–§3) stays exactly as it is. Team Mode is a second game mode in the same room, lobby, server and screens. Colors of the two teams: BRAND.md §7. Events: `EVENTS.md` §6.
+
+### 17.1 Words
+| Word | Meaning |
+|---|---|
+| Team | `A` or `B`. Every player is in exactly one team. |
+| Board | 4×4 = 16 squares. Each square has its own category. |
+| Square | `{ id: 0..15, category: { id, title }, owner: null \| 'A' \| 'B', mine: null \| 'A' \| 'B' }`. `id = row * 4 + col`. |
+| Turn | The team whose turn it is chooses the next square. |
+| Battle | One speed round (§3.2–§3.3) played on one square by both teams together. |
+| Team points | Running total of all points a team scored in all battles of this game. Shown on screens; used only for tie-breaks and the Mine card. |
+| Card | One-time power. Each team has one of each per game: `freeze`, `lock`, `mine`, `steal`. |
+| Sitting out | After each battle, the lowest scorer of each team sits out the next battle (PB-20). |
+
+### 17.2 Lobby and teams (PB-13, Renad)
+1. The host chooses the mode in the lobby: «فردي» (classic, default) or «فرق». `game:start` sends `{ code, mode: 'classic' | 'teams' }`.
+2. Teams needs **at least 4 players and at least 2 in each team**; otherwise `NOT_ENOUGH_PLAYERS`. Max 12 players as before.
+3. In the lobby the host can move a player to team A or B (`team:set`) or press «وزّع عشوائي» (`team:shuffle`). New joiners go to the smaller team. Teams are always visible: big screen shows two columns in team colors; each phone shows «فريقك: أ» or «فريقك: ب» in the team color.
+4. If the host presses Start in teams mode with unbalanced teams (difference > 1), the server rebalances by moving the latest joiners. If nobody was assigned, the server splits randomly. The server function is `assignTeams(players, current)` in `server/game.js` (pure, tested).
+5. Team names on screens: «الفريق الأول» (A) and «الفريق الثاني» (B).
+
+### 17.3 Board and turns (PB-14, Layan)
+1. On start the server picks **16 different categories** (same source as §3.5) and builds the board. All squares are free; no mines.
+2. Team A has the first turn. The server sends `board:update` and then `turn:start { team }`.
+3. Any connected, not-sitting-out player of the turn team taps a **free** square on their phone (`square:choose`). First valid tap wins; later taps get `NOT_YOUR_TURN` or `TAKEN`. The other team's phones show the board read-only with «دور الفريق …».
+4. If nobody chooses within **15 s**, the server picks a random free square.
+5. After a square is chosen: `battle:chosen { squareId, team }`, then a **5 s window for cards** (§17.6), then the normal 3-2-1 countdown and a 20 s battle.
+
+### 17.4 Battle (PB-14, Layan)
+1. A battle uses the classic round engine: same matching (`normalize()`), same locks, +1 correct, −1 for a word locked by anyone, 0 for repeat/wrong. Player scores reset to 0 at the start of every battle (as in classic).
+2. **No elimination in Team Mode.** `round:end` is replaced by `battle:end`.
+3. Battle result: team battle score = sum of its players' points in this battle (after Lock bonus, §17.6). Higher score captures the square (`owner = team`). Tie: the team whose last correct answer came **later** loses. Nobody scored at all → the square stays free.
+4. Both teams' battle scores are added to their team points.
+5. After `battle:end` the big screen and phones show the result for 4 s, then the next turn goes to the **other** team (even if the turn team lost).
+
+### 17.5 Winning (PB-15, Reef)
+1. After every battle: if a team owns all 4 squares of any **row** or any **column**, it wins immediately (`game:over` with `winnerTeam`). Diagonals do not count.
+2. If no free square is left (and no steal is possible) and nobody has a line: the team with more squares wins; equal squares → more team points; still equal → draw (`winnerTeam: null`).
+3. Pure function `findWinningLine(board)` → `{ team, line: [ids] } | null` in `server/game.js` with tests for every row, every column, no line, and a full board.
+4. Big screen: highlight the winning line, «فاز الفريق الأول!», list of the winning team's players, «العب مرة ثانية». Phone: «فاز فريقك!» or «خسر فريقك», plus the same Play Again flow as classic.
+
+### 17.6 Cards
+General rules:
+- Each team has `{ freeze: 1, lock: 1, mine: 1, steal: 1 }` at game start. A used card is gone. `card:play { code, card, target? }` → ack `{ ok }` or `{ ok: false, error }` with `NO_CARD`, `NOT_NOW`, `NOT_ALLOWED`, `BAD_TARGET`.
+- **Who may play a card:** if the team has a sitting-out player (§17.7), only that player; otherwise any player of the team.
+- Every played card is announced to everyone with `card:played { team, card, by: { id, name }, target? }` and shown on the big screen for 3 s.
+
+| Card | Story / owner | When | Effect |
+|---|---|---|---|
+| **Freeze** «تجميد» | PB-16 Danah | During a battle (after `round:start`, before `endsAt − 3 s`) | Freezes the **opponent player with the highest score in this battle** (tie → random) for **3 s**. Their `answer:submit` gets `result: 'frozen'` (0). Their phone shows a frozen overlay with a 3-2-1. Server sends `player:frozen { id, until }`. |
+| **Lock** «قفل» | PB-17 Leena | Only by the team that did **not** choose the square, during the 5 s card window after `battle:chosen` | In this battle each correct answer of the **locking team** is worth **+2** instead of +1. The square shows a lock badge during the battle. Server includes `lockedBy` in `round:start`. |
+| **Mine** «لغم» | PB-18 Renad | On your own turn, before or after choosing (any time during your turn) | Secretly place a mine on a **free** square (`target = squareId`). Only your team sees it. If the **other** team later battles on that square and **loses**, it loses **3 team points** and the mine explodes (`mine:exploded { squareId, team }`). If the other team wins there, the mine is removed silently. Max one mine per square. |
+| **Steal** «سرقة» | PB-19 Layan | On your own turn, instead of a free square | Choose a square **owned by the other team** (`square:choose { squareId, steal: true }`). Battle as usual: win → the square becomes yours; lose → it stays theirs. The card is used either way. |
+
+### 17.7 Sitting out and card choice (PB-20, Reef)
+1. After every battle, in each team the player with the lowest battle score sits out the next battle (tie → slower last correct answer → joined last). Teams with only 2 players never sit anyone out.
+2. A sitting-out player cannot answer (`answer:submit` → `closed`) and sees «أنت تختار بطاقة فريقك» with the team's remaining cards as buttons, plus the live battle.
+3. Only the sitting-out player can play the team's card during that battle or card window. Their choice is final.
+4. In the next battle they play normally again.
+5. Server sends `team:sitout { A: id | null, B: id | null }` before each battle.
+
+### 17.8 Reconnection (PB-28, Leena)
+1. Applies to both modes. After a refresh or lost signal, the phone rejoins with the same `playerId`, name, team, scores, sitting-out state and frozen state (§3.7 + `room:rejoin`).
+2. The `state` snapshot also includes `mode`, `teams`, `board` (without the other team's mines), `turn`, `cards`, `teamPoints`, `sitout`, `frozenUntil` (EVENTS.md §6.3).
+3. A disconnected player stays in their team. If the turn team has no connected player, the server picks a random square after 15 s (§17.3).
+4. Tests: rejoin in lobby, during a battle, during the card window, and after `game:over`.
+
+### 17.9 Screens
+| Screen | Big screen (`/host`) | Phone (`/play`) |
+|---|---|---|
+| Lobby (teams) | Mode switch, two team columns, «وزّع عشوائي», Start | My team badge in team color |
+| Board | 4×4 grid: free squares show the category title; owned squares filled with team color; turn banner «دور الفريق …»; team points and remaining cards of both teams | Same grid, tappable on my team's turn; my team's mines visible; card buttons |
+| Card window | Chosen square enlarged, 5 s bar, «ينتظر بطاقات…» | Lock button (other team only) |
+| Battle | Classic round screen + chosen square title + team scores side by side + card announcements | Classic round screen + team score bar + Freeze button; frozen overlay when frozen; sit-out screen when sitting out |
+| Battle end | Winner team of the square, both battle scores, square fills with team color | «فريقك أخذ المربع!» / «الخصم أخذ المربع» |
+| Game over | Winning line highlighted, «فاز الفريق …», Play Again | «فاز فريقك!» / «خسر فريقك» |
+
+All Team Mode screens follow §7 (responsive), §8 (identity) and §9 (accessibility). The 4×4 board must fit a 360×640 phone without scrolling; squares ≥ 64px on phones; category text may wrap to 2 lines and then ellipsis.
+
+### 17.10 Acceptance criteria (Sprint 2 stories)
+| Story | Done when |
+|---|---|
+| PB-13 | The host can choose Team Mode, move players between teams or shuffle, and Start refuses fewer than 2 per team. Every phone shows its team. |
+| PB-14 | A 4×4 board with 16 different categories appears; only the turn team can choose a free square; a battle on it gives the square to the higher-scoring team; turns alternate. |
+| PB-15 | A full row or column ends the game for that team; a full board without a line is decided by squares, then team points, then draw. |
+| PB-16 | Freeze blocks the top opponent's answers for exactly 3 s and is usable once per team per game. |
+| PB-17 | Lock doubles the locking team's correct answers in that battle and can only be played by the non-choosing team in the card window. |
+| PB-18 | A hidden mine costs the rival 3 team points when they lose on it; only the owner team sees it. |
+| PB-19 | A team can battle for a rival square with Steal and takes it if it wins. |
+| PB-20 | The lowest scorer of each team sits out the next battle and is the only one who can play the team's cards. |
+| PB-28 | Refreshing a phone at any moment returns it to the same team, scores and screen. |
+
+### 17.11 Build order (dependencies)
+1. **Layan first:** add the §6 events to `EVENTS.md` (already listed there — keep names exactly), then teams model + board + turns + battles (PB-14) on the server.
+2. **In parallel with fake data shaped like EVENTS.md §6:** Renad lobby teams (PB-13), Reef board/line win screens (PB-15), Danah Freeze UI (PB-16), Leena rejoin (PB-28).
+3. **After PB-14 is merged:** Lock (PB-17), Mine (PB-18), Steal (PB-19), Sitting out (PB-20).
+4. Each card: server rule as a pure function in `server/game.js` + `node:test` tests + its UI on both screens.

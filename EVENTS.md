@@ -39,6 +39,9 @@ Changing a name or a payload = tell everyone first and update this file **in the
   me: { id, out, score } | null }   // null for the screen-mode host
 ```
 
+### Team Mode (Sprint 2 — rules in SPEC §17)
+See **§6** at the end of this file.
+
 ## 2. Who listens to what
 
 | Event | Big screen (Renad) | Phone (Reef) |
@@ -83,3 +86,65 @@ socket.on('room:join', ({ code, name }, ack) => {
   io.to(code).emit('room:players', playersPayload(room));
 });
 ```
+
+
+## 6. Team Mode events (Sprint 2)
+Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Every event below exists only when `mode = 'teams'`; classic events in §1 are unchanged except where noted.
+
+### 6.1 Changes to existing events
+| Event | Change |
+|---|---|
+| `game:start` | Payload `{ code, mode: 'classic' \| 'teams' }` (default `classic`). Teams: error `NOT_ENOUGH_PLAYERS` if < 4 players or < 2 per team |
+| `room:players` | Each player also has `team: 'A' \| 'B' \| null` |
+| `round:start` | In teams mode also `{ squareId, lockedBy: 'A' \| 'B' \| null }` |
+| `answer:submit` | Extra results: `frozen` (0, you are frozen), `closed` also when you sit out. Lock bonus: `delta` is `+2` for the locking team |
+| `score:update` | In teams mode also `{ teamScores: { A, B } }` (this battle) |
+| `game:over` | In teams mode `{ winnerTeam: 'A' \| 'B' \| null, line: [squareIds] \| null, squares: { A, B }, teamPoints: { A, B } }` |
+
+### 6.2 New events
+| Event | Dir | Sent by | Payload → ack | Meaning |
+|---|---|---|---|---|
+| `team:set` | C→S | host | `{ code, playerId, team }` → `{ ok }` or `{ ok: false, error }` | Lobby only. Move a player. Errors `NOT_HOST`, `STARTED`, `NOT_FOUND` |
+| `team:shuffle` | C→S | host | `{ code }` → `{ ok }` | Lobby only. Random balanced split. Server then sends `room:players` |
+| `board:update` | S→C | server | `{ board: [{ id, category: { id, title }, owner }], teamPoints: { A, B }, cards: { A: {freeze,lock,mine,steal}, B: {…} } }` | Full board after start and after every change. Mines are **not** in this payload |
+| `board:mines` | S→C | server (to one team only) | `{ mines: [squareId] }` | Your team's hidden mines. Sent only to sockets of that team |
+| `turn:start` | S→C | server | `{ team, endsAt }` | Turn team chooses a square before `endsAt` (15 s) or the server picks |
+| `square:choose` | C→S | player | `{ code, squareId, steal? }` → `{ ok }` or `{ ok: false, error }` | Errors `NOT_YOUR_TURN`, `TAKEN`, `NO_CARD` (steal), `BAD_TARGET`, `SITTING_OUT` |
+| `battle:chosen` | S→C | server | `{ squareId, team, steal, cardWindowEndsAt }` | Square chosen; 5 s card window, then `round:countdown` |
+| `card:play` | C→S | player | `{ code, card: 'freeze' \| 'lock' \| 'mine' \| 'steal', target? }` → `{ ok }` or `{ ok: false, error }` | Errors `NO_CARD`, `NOT_NOW`, `NOT_ALLOWED`, `BAD_TARGET`. `steal` is played through `square:choose` |
+| `card:played` | S→C | server | `{ team, card, by: { id, name }, target? }` | Announce a card. For `mine`, sent **without** `target` to the other team |
+| `player:frozen` | S→C | server | `{ id, until }` | Freeze card hit this player until `until` (server ms) |
+| `mine:exploded` | S→C | server | `{ squareId, team, points: -3 }` | The team that lost on a mined square lost 3 team points |
+| `team:sitout` | S→C | server | `{ A: playerId \| null, B: playerId \| null }` | Sent before every battle |
+| `battle:end` | S→C | server | `{ squareId, winnerTeam: 'A' \| 'B' \| null, teamScores: { A, B }, scores: [{ id, name, team, score }] }` | Replaces `round:end` in teams mode. Next: `turn:start` after 4 s, or `game:over` |
+
+### 6.3 `state` snapshot additions (ack of `room:rejoin`, teams mode)
+```js
+{ ...classic snapshot,
+  mode: 'teams',
+  status: 'lobby' | 'turn' | 'cardWindow' | 'countdown' | 'round' | 'battleEnd' | 'over',
+  players: [{ id, name, out, connected, team }],
+  board: [{ id, category: { id, title }, owner }],
+  mines: [squareId],              // only my team's
+  turn: { team, endsAt } | null,
+  chosen: { squareId, team, steal, lockedBy } | null,
+  cards: { A: { freeze, lock, mine, steal }, B: { … } },
+  teamPoints: { A, B },
+  sitout: { A: id | null, B: id | null },
+  frozenUntil: number | null,     // for me
+  me: { id, team, score, sittingOut } | null }
+```
+
+### 6.4 Who listens to what (teams mode)
+| Event | Big screen | Phone |
+|---|---|---|
+| `board:update` | Board grid, team points, cards left | Board grid, my team's cards |
+| `board:mines` | — (never shown on the big screen) | Mine icon on my team's mined squares |
+| `turn:start` | «دور الفريق …» + 15 s bar | My team: board tappable; other team: read-only |
+| `battle:chosen` | Enlarge square, 5 s card bar | Lock button for the non-choosing team |
+| `card:played` | 3 s announcement | Toast |
+| `player:frozen` | Ice icon on that player | If me: frozen overlay 3-2-1, input disabled |
+| `team:sitout` | Mark sitting-out players | If me: sit-out screen with card buttons |
+| `battle:end` | Square fills with team color, both scores | «فريقك أخذ المربع!» / «الخصم أخذ المربع» |
+| `mine:exploded` | Explosion on the square, −3 | Toast |
+| `game:over` | Winning line + winner team + Play Again | «فاز فريقك!» / «خسر فريقك» |
