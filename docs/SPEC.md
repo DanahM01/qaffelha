@@ -417,7 +417,7 @@ Classic mode (§2–§3) stays exactly as it is. Team Mode is a second game mode
 | Sitting out | After each battle, the lowest scorer of each team sits out the next battle (PB-20). |
 
 ### 17.2 Lobby and teams (PB-13, Renad)
-1. The host chooses the mode in the lobby: «فردي» (classic, default) or «فرق». `game:start` sends `{ code, mode: 'classic' | 'teams' }`.
+1. The host chooses the mode in the lobby: «فردي» (classic, default) or «فرق». `game:start` sends `{ code, gameMode: 'classic' | 'teams' }` (`mode` already means `screen`/`phone`, §2.2).
 2. Teams needs **at least 4 players and at least 2 in each team**; otherwise `NOT_ENOUGH_PLAYERS`. Max 12 players as before.
 3. In the lobby the host can move a player to team A or B (`team:set`) or press «وزّع عشوائي» (`team:shuffle`). New joiners go to the smaller team. Teams are always visible: big screen shows two columns in team colors; each phone shows «فريقك: أ» or «فريقك: ب» in the team color.
 4. If the host presses Start in teams mode with unbalanced teams (difference > 1), the server rebalances by moving the latest joiners. If nobody was assigned, the server splits randomly. The server function is `assignTeams(players, current)` in `server/game.js` (pure, tested).

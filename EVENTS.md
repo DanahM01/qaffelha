@@ -89,13 +89,13 @@ socket.on('room:join', ({ code, name }, ack) => {
 
 
 ## 6. Team Mode events (Sprint 2)
-Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Every event below exists only when `mode = 'teams'`; classic events in §1 are unchanged except where noted.
+Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Every event below exists only when `gameMode = 'teams'`; classic events in §1 are unchanged except where noted.
 
 ### 6.1 Changes to existing events
 | Event | Change |
 |---|---|
-| `game:start` | Payload `{ code, mode: 'classic' \| 'teams' }` (default `classic`). Teams: error `NOT_ENOUGH_PLAYERS` if < 4 players or < 2 per team |
-| `room:players` | Each player also has `team: 'A' \| 'B' \| null` |
+| `game:start` | Payload `{ code, gameMode: 'classic' \| 'teams' }` (default `classic`; not `mode`, which is `screen`/`phone`). Teams: error `NOT_ENOUGH_PLAYERS` if < 4 players or < 2 per team |
+| `room:players` | Also `gameMode`, and each player has `team: 'A' \| 'B' \| null` |
 | `round:start` | In teams mode also `{ squareId, lockedBy: 'A' \| 'B' \| null }` |
 | `answer:submit` | Extra results: `frozen` (0, you are frozen), `closed` also when you sit out. Lock bonus: `delta` is `+2` for the locking team |
 | `score:update` | In teams mode also `{ teamScores: { A, B } }` (this battle) |
@@ -121,7 +121,7 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
 ### 6.3 `state` snapshot additions (ack of `room:rejoin`, teams mode)
 ```js
 { ...classic snapshot,
-  mode: 'teams',
+  gameMode: 'teams',               // mode stays 'screen' | 'phone'
   status: 'lobby' | 'turn' | 'cardWindow' | 'countdown' | 'round' | 'battleEnd' | 'over',
   players: [{ id, name, out, connected, team }],
   board: [{ id, category: { id, title }, owner }],
