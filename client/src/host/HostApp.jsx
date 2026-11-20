@@ -1,10 +1,13 @@
-// Owner: Renad. Main screen (TV / laptop): room code, lobby, category, timer, locked words, scoreboard.
+// Owner: Renad. Main screen (TV / laptop): room code, lobby, category, timer, locked words, scoreboard,
+// round end and results (Danah).
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { socket } from '../socket.js';
 import HostLobby from './HostLobby.jsx';
 import Countdown from './Countdown.jsx';
 import RoundScreen from './RoundScreen.jsx';
+import RoundEnd from './RoundEnd.jsx';
+import Results from './Results.jsx';
 import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
 
 // Event names from EVENTS.md §1.
@@ -16,6 +19,9 @@ const ROUND_COUNTDOWN = 'round:countdown';
 const ROUND_START = 'round:start';
 const ANSWER_LOCKED = 'answer:locked';
 const SCORE_UPDATE = 'score:update';
+const ROUND_END = 'round:end';
+const GAME_OVER = 'game:over';
+const GAME_RESTART = 'game:restart';
 
 const STORE_KEY = 'qaffelha';
 const ACK_TIMEOUT_MS = 10000;
@@ -75,7 +81,7 @@ export default function HostApp() {
   const fake = import.meta.env.DEV && params.get('fake') === '1';
 
   // Fake mode starts straight in the lobby so the connecting screen never flashes.
-  const [status, setStatus] = useState(() => (fake ? 'lobby' : 'connecting')); // connecting | lobby | countdown | round | resuming | error
+  const [status, setStatus] = useState(() => (fake ? 'lobby' : 'connecting')); // connecting | lobby | countdown | round | roundEnd | over | resuming | error
   const [code, setCode] = useState(() => (fake ? fakeCreateAck().code : ''));
   const [players, setPlayers] = useState([]);
   const [countdown, setCountdown] = useState(null); // { round, startsAt } from round:countdown
@@ -85,6 +91,12 @@ export default function HostApp() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null); // null | 'NOT_ENOUGH_PLAYERS' | 'FAILED'
   const [attempt, setAttempt] = useState(0);
+  const [roundEnd, setRoundEnd] = useState(null); // round:end payload + who was still playing
+  const [gameOver, setGameOver] = useState(null); // game:over payload
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState(false);
+  const playersRef = useRef([]);
+  playersRef.current = players;
   const pending = useRef(null); // one request per attempt, even when StrictMode runs the effect twice
   const clockOffset = useRef(0); // serverTime - Date.now(), for the countdown and round timers
   const fakeRoom = useRef(null);
@@ -110,6 +122,22 @@ export default function HostApp() {
 
   const addLocked = (payload) => setLocked((words) => [{ word: payload.word, by: payload.by }, ...words]);
   const updateScores = (payload) => setScores(payload.scores);
+
+  // round:end lists every player; keep only the ones still playing this round.
+  const endRound = (payload) => {
+    const before = playersRef.current;
+    const active = new Set(before.filter((p) => !p.out).map((p) => p.id));
+    const scoresNow = payload.scores.filter((s) => active.size === 0 || active.has(s.id));
+    const avatarIndex = Math.max(0, before.findIndex((p) => p.id === payload.eliminated.id));
+    setRoundEnd({ round: payload.round, scores: scoresNow, eliminated: payload.eliminated, avatarIndex, lastRound: scoresNow.length <= 2 });
+    setStatus('roundEnd');
+  };
+  const endGame = (payload) => {
+    setGameOver(payload);
+    setRestarting(false);
+    setRestartError(false);
+    setStatus('over');
+  };
 
   useEffect(() => {
     if (fake) {
@@ -137,6 +165,8 @@ export default function HostApp() {
     socket.on(ROUND_START, startRound);
     socket.on(ANSWER_LOCKED, addLocked);
     socket.on(SCORE_UPDATE, updateScores);
+    socket.on(ROUND_END, endRound);
+    socket.on(GAME_OVER, endGame);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -165,6 +195,8 @@ export default function HostApp() {
       socket.off(ROUND_START, startRound);
       socket.off(ANSWER_LOCKED, addLocked);
       socket.off(SCORE_UPDATE, updateScores);
+      socket.off(ROUND_END, endRound);
+      socket.off(GAME_OVER, endGame);
     };
   }, [fake, attempt, navigate]);
 
@@ -181,6 +213,31 @@ export default function HostApp() {
       setStartError('FAILED');
     }
     setStarting(false);
+  };
+
+  // «العب مرة ثانية»: same code and players, back to the lobby (EVENTS.md game:restart).
+  const playAgain = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    setRestartError(false);
+    try {
+      const res = await request(GAME_RESTART, { code });
+      if (res.ok) {
+        setLocked([]);
+        setScores([]);
+        setRoundEnd(null);
+        setGameOver(null);
+        setStatus('lobby');
+      } else setRestartError(true);
+    } catch {
+      setRestartError(true);
+    }
+    setRestarting(false);
+  };
+
+  const goHome = () => {
+    writeSaved(null);
+    navigate('/');
   };
 
   const retry = () => {
@@ -203,6 +260,10 @@ export default function HostApp() {
           players={players}
           scores={scores}
         />
+      )}
+      {status === 'roundEnd' && roundEnd && <RoundEnd {...roundEnd} />}
+      {status === 'over' && gameOver && (
+        <Results winner={gameOver.winner} ranking={gameOver.ranking} onAgain={playAgain} onHome={goHome} busy={restarting} error={restartError} />
       )}
       {status === 'connecting' && (
         <div className="q-screen-host q-center" style={{ justifyContent: 'center' }}>
