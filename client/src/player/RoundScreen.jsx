@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { EyeIcon, LockIcon, SendIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
+import { isSittingOut } from "./teamState.js";
 
 const MESSAGES = {
   correct: "صح! قفّلتها عليهم",
@@ -8,6 +9,7 @@ const MESSAGES = {
   wrong: "مو من الفئة، جرّب غيرها",
   repeat: "كتبتها قبل، ما تنحسب مرتين",
   closed: "انتهى وقت الإجابة",
+  frozen: "متجمّد شوي… انتظر ترجع تكتب",
 };
 
 export default function RoundScreen({
@@ -25,7 +27,9 @@ export default function RoundScreen({
     (state.scores || []).map((entry) => [entry.id, entry.score]),
   );
   const me = state.players.find((player) => player.id === meId);
-  const out = me?.out || state.me?.out;
+  const sittingOut = state.gameMode === "teams" && isSittingOut(state, meId);
+  const out =
+    state.gameMode === "teams" ? sittingOut : me?.out || state.me?.out;
   const active = state.players.filter((player) => !player.out);
   const score = scores.get(meId) ?? state.me?.score ?? 0;
   const rank =
@@ -107,7 +111,11 @@ export default function RoundScreen({
               className={`q-feedback q-feedback--${["correct", "locked", "repeat"].includes(feedback.result) ? feedback.result : "wrong"} q-m-toast`}
             >
               <span className="q-feedback__pts">
-                {feedback.delta > 0 ? "+1" : feedback.delta < 0 ? "−1" : "0"}
+                {feedback.delta > 0
+                  ? `+${feedback.delta}`
+                  : feedback.delta < 0
+                    ? `−${Math.abs(feedback.delta)}`
+                    : "0"}
               </span>
               <div className="q-stack">
                 <span className="q-feedback__word">{feedback.text}</span>
@@ -121,7 +129,9 @@ export default function RoundScreen({
         {out ? (
           <p className="q-spectate">
             <EyeIcon />
-            طلعت من اللعبة — تتفرج
+            {sittingOut
+              ? "ترتاح هالجولة — تتابع وتختار بطاقة فريقك"
+              : "طلعت من اللعبة — تتفرج"}
           </p>
         ) : (
           <form className="q-answer-bar" onSubmit={submit}>

@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { MongoClient } from 'mongodb';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, stateSnapshot, teamGameResult } from './game.js';
+  playersPayload, scoresPayload, stateSnapshot, teamGameResult, prepareTeamSitouts } from './game.js';
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -27,6 +27,18 @@ export function completeTeamGame(io, rooms, code) {
   if (!result) return false;
   rooms.set(code, { ...room, status: 'over', teamResult: result });
   io.to(code).emit(EVENTS.over, result);
+  return true;
+}
+
+// Reef / PB-20. PB-14 calls once after battle settlement, before the next turn
+// and its card window. Never call again during that same battle's countdown.
+export function publishTeamSitouts(io, rooms, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameMode !== 'teams' || room.status !== 'battleEnd') return false;
+  if (room.sitoutPreparedRound === room.round) return false;
+  const next = { ...prepareTeamSitouts(room), sitoutPreparedRound: room.round };
+  rooms.set(code, next);
+  io.to(code).emit('team:sitout', next.sitout);
   return true;
 }
 

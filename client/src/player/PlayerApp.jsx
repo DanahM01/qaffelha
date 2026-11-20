@@ -1,5 +1,5 @@
 // Owner: Reef. Phone routes share one server-authoritative session.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Logo from "../theme/Logo.jsx";
 import usePlayerSession from "./usePlayerSession.js";
@@ -9,15 +9,21 @@ import CountdownScreen from "./CountdownScreen.jsx";
 import RoundScreen from "./RoundScreen.jsx";
 import RoundEndScreen from "./RoundEndScreen.jsx";
 import ResultsScreen from "./ResultsScreen.jsx";
-import TeamBadge from './TeamBadge.jsx';
-import TeamResultsScreen from './TeamResultsScreen.jsx';
-import TeamBoardScreen from './TeamBoardScreen.jsx';
+import TeamBadge from "./TeamBadge.jsx";
+import TeamResultsScreen from "./TeamResultsScreen.jsx";
+import TeamBoardScreen from "./TeamBoardScreen.jsx";
+import TeamCardChoices from "./TeamCardChoices.jsx";
+import { myTeam } from "./teamState.js";
 
 export default function PlayerApp() {
   const location = useLocation();
   const navigate = useNavigate();
   const session = usePlayerSession(navigate);
   const [sharingError, setSharingError] = useState("");
+  const [targetCard, setTargetCard] = useState(null);
+  useEffect(() => {
+    setTargetCard(null);
+  }, [session.state.status, session.state.turn?.endsAt]);
   const segment = location.pathname.split("/")[2] || "";
   const host = segment === "new";
   const code = host ? "" : segment.toUpperCase();
@@ -41,10 +47,52 @@ export default function PlayerApp() {
   }
 
   const round = session.identity && session.state.status === "round";
-  const teams = session.identity && session.state.gameMode === 'teams';
+  const teams = session.identity && session.state.gameMode === "teams";
+  const team = myTeam(session.state, session.identity?.playerId);
+  const targets = targetCard
+    ? (session.state.board || [])
+        .filter((square) =>
+          targetCard === "mine"
+            ? square.owner === null &&
+              !(session.state.mines || []).includes(square.id)
+            : square.owner && square.owner !== team,
+        )
+        .map((square) => square.id)
+    : undefined;
+  const busy = session.busy || session.reconnecting || !session.connected;
+  function selectCard(card) {
+    if (card === "mine" || card === "steal") setTargetCard(card);
+    else void session.playCard(card);
+  }
+  async function chooseSquare(id) {
+    const accepted =
+      targetCard === "mine"
+        ? await session.playCard("mine", id)
+        : await session.chooseSquare(id, { steal: targetCard === "steal" });
+    if (accepted) setTargetCard(null);
+  }
+  const cardChoices = teams && (
+    <TeamCardChoices
+      state={session.state}
+      meId={session.identity.playerId}
+      offset={session.offset}
+      busy={busy}
+      onCard={selectCard}
+      targetCard={targetCard}
+      onCancel={() => setTargetCard(null)}
+    />
+  );
   return (
     <main className="q-app" dir="rtl" lang="ar">
-      <div className={round ? "q-home q-m q-m-round" : teams && session.state.status !== 'lobby' ? 'q-screen-player q-team-screen' : "q-screen-player"}>
+      <div
+        className={
+          round
+            ? `q-home q-m q-m-round ${teams ? "q-team-round" : ""}`
+            : teams && session.state.status !== "lobby"
+              ? "q-screen-player q-team-screen"
+              : "q-screen-player"
+        }
+      >
         {(session.reconnecting || !session.connected) && (
           <p className="q-alert q-alert--info" role="status">
             {session.identity ? "نرجعك للعبة…" : "جاري الاتصال…"}
@@ -57,7 +105,13 @@ export default function PlayerApp() {
         )}
         {session.identity ? (
           <>
-            {session.state.gameMode === 'teams' && session.state.status !== 'over' && <TeamBadge state={session.state} meId={session.identity.playerId} />}
+            {session.state.gameMode === "teams" &&
+              session.state.status !== "over" && (
+                <TeamBadge
+                  state={session.state}
+                  meId={session.identity.playerId}
+                />
+              )}
             {session.state.status === "lobby" ? (
               <LobbyScreen
                 code={session.identity.code}
@@ -72,37 +126,74 @@ export default function PlayerApp() {
                 }
                 message={sharingError}
               />
-            ) : teams && ['turn', 'cardWindow', 'battleEnd'].includes(session.state.status) ? (
-              <TeamBoardScreen state={session.state} meId={session.identity.playerId} offset={session.offset}
-                busy={session.busy || session.reconnecting || !session.connected} onChoose={session.chooseSquare} />
-            ) : session.state.status === "countdown" ? (
-              <CountdownScreen state={session.state} offset={session.offset} />
-            ) : round ? (
-              <RoundScreen
-                key={session.state.endsAt}
+            ) : teams &&
+              ["turn", "cardWindow", "battleEnd"].includes(
+                session.state.status,
+              ) ? (
+              <TeamBoardScreen
                 state={session.state}
                 meId={session.identity.playerId}
                 offset={session.offset}
-                feedback={session.feedback}
-                disabled={!session.connected || session.reconnecting}
-                onAnswer={session.answer}
-              />
+                busy={busy}
+                onChoose={chooseSquare}
+                targets={targets}
+              >
+                {cardChoices}
+              </TeamBoardScreen>
+            ) : session.state.status === "countdown" ? (
+              <CountdownScreen state={session.state} offset={session.offset} />
+            ) : round ? (
+              <>
+                {teams && (
+                  <>
+                    <div className="q-m-me q-team-points">
+                      <span>
+                        نقاط الأول<b>{session.state.teamScores?.A ?? 0}</b>
+                      </span>
+                      <span>
+                        نقاط الثاني<b>{session.state.teamScores?.B ?? 0}</b>
+                      </span>
+                    </div>
+                    {cardChoices}
+                  </>
+                )}
+                <RoundScreen
+                  key={session.state.endsAt}
+                  state={session.state}
+                  meId={session.identity.playerId}
+                  offset={session.offset}
+                  feedback={session.feedback}
+                  disabled={!session.connected || session.reconnecting}
+                  onAnswer={session.answer}
+                />
+              </>
             ) : session.state.status === "roundEnd" ? (
               <RoundEndScreen
                 state={session.state}
                 meId={session.identity.playerId}
               />
             ) : session.state.status === "over" ? (
-              session.state.gameMode === 'teams' ? <TeamResultsScreen state={session.state} meId={session.identity.playerId}
-                isHost={isHost} busy={session.busy || session.reconnecting || !session.connected} onAgain={session.restart} /> : <ResultsScreen
-                state={session.state}
-                meId={session.identity.playerId}
-                isHost={isHost}
-                busy={
-                  session.busy || session.reconnecting || !session.connected
-                }
-                onAgain={session.restart}
-              />
+              session.state.gameMode === "teams" ? (
+                <TeamResultsScreen
+                  state={session.state}
+                  meId={session.identity.playerId}
+                  isHost={isHost}
+                  busy={
+                    session.busy || session.reconnecting || !session.connected
+                  }
+                  onAgain={session.restart}
+                />
+              ) : (
+                <ResultsScreen
+                  state={session.state}
+                  meId={session.identity.playerId}
+                  isHost={isHost}
+                  busy={
+                    session.busy || session.reconnecting || !session.connected
+                  }
+                  onAgain={session.restart}
+                />
+              )
             ) : (
               <>
                 <Logo size={40} />

@@ -179,3 +179,52 @@ export function teamGameResult(board, teamPoints = { A: 0, B: 0 }, cards = {}) {
   return { winnerTeam: difference > 0 ? 'A' : difference < 0 ? 'B' : null,
     line: null, squares, teamPoints: points };
 }
+
+// Reef / PB-20. Previous sitting-out players return next battle and are not
+// ranked as zero-point participants in the battle they did not play.
+export function selectTeamSitouts(players, joinOrder, previous = {}) {
+  const result = { A: null, B: null };
+  const allPlayers = [...players];
+  for (const team of ['A', 'B']) {
+    const members = allPlayers.filter((player) => player.team === team);
+    if (members.length <= 2) continue;
+    const eligible = members.filter((player) => player.id !== previous[team]);
+    eligible.sort((a, b) => a.score - b.score ||
+      (b.lastCorrectAt ?? Infinity) - (a.lastCorrectAt ?? Infinity) ||
+      joinOrder.indexOf(b.id) - joinOrder.indexOf(a.id));
+    result[team] = eligible[0]?.id ?? null;
+  }
+  return result;
+}
+
+export function prepareTeamSitouts(room) {
+  return { ...room, sitout: selectTeamSitouts(room.players.values(), room.joinOrder, room.sitout), cardChoices: {} };
+}
+
+export function teamCardPermission(room, playerId) {
+  const player = room.players.get(playerId);
+  if (room.gameMode !== 'teams' || !player?.connected || !['A', 'B'].includes(player.team)) return 'NOT_ALLOWED';
+  const chooser = room.sitout?.[player.team];
+  if (chooser && chooser !== playerId) return 'NOT_ALLOWED';
+  if (chooser && room.cardChoices?.[player.team]) return 'NOT_ALLOWED';
+  return null;
+}
+
+// Call only after the owning card's phase/target/effect validation succeeds.
+// This records PB-20 finality; the card owner still applies and consumes it.
+export function recordTeamCardChoice(room, playerId, card) {
+  const error = teamCardPermission(room, playerId);
+  if (error) return { room, error };
+  const team = room.players.get(playerId).team;
+  if (!['freeze', 'lock', 'mine', 'steal'].includes(card)) return { room, error: 'BAD_TARGET' };
+  if (!(room.cards?.[team]?.[card] > 0)) return { room, error: 'NO_CARD' };
+  return { room: { ...room, cardChoices: { ...room.cardChoices, [team]: card } }, error: null };
+}
+
+export function submitTeamAnswer(room, playerId, text, now) {
+  const player = room.players.get(playerId);
+  if (room.gameMode === 'teams' && player && room.sitout?.[player.team] === playerId) {
+    return { room, word: null, ack: { result: 'closed', delta: 0, score: player.score } };
+  }
+  return submitAnswer(room, playerId, text, now);
+}

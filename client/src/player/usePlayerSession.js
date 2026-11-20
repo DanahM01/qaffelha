@@ -1,7 +1,7 @@
 // Owner: Reef. Only sends documented intents; game decisions belong to the server.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { socket } from "../socket.js";
-import { TEAM_EVENTS, applyTeamEvent } from './teamState.js';
+import { TEAM_EVENTS, applyTeamEvent, myTeam } from "./teamState.js";
 
 const CREATE = "room:create";
 const JOIN = "room:join";
@@ -16,7 +16,8 @@ const SCORES = "score:update";
 const ROUND_END = "round:end";
 const OVER = "game:over";
 const RESTART = "game:restart";
-const CHOOSE = 'square:choose';
+const CHOOSE = "square:choose";
+const PLAY_CARD = "card:play";
 const ERRORS = {
   NOT_FOUND: "الغرفة مو موجودة",
   NAME_TAKEN: "الاسم مأخوذ",
@@ -119,7 +120,8 @@ export default function usePlayerSession(navigate) {
     };
     const players = (payload) =>
       setState((current) =>
-        current.gameMode !== 'teams' && current.status === "over" &&
+        current.gameMode !== "teams" &&
+        current.status === "over" &&
         payload.players.every((player) => !player.out)
           ? { ...EMPTY, ...payload, scores: [], locked: [], me: null }
           : { ...current, ...payload },
@@ -137,6 +139,7 @@ export default function usePlayerSession(navigate) {
         ...payload,
         status: "round",
         locked: [],
+        teamScores: { A: 0, B: 0 },
         scores: current.players.map(({ id }) => ({ id, score: 0 })),
       }));
     };
@@ -155,8 +158,11 @@ export default function usePlayerSession(navigate) {
           : current,
       );
     const scores = (payload) =>
-      setState((current) => ({ ...current, scores: payload.scores,
-        ...(payload.teamScores ? { teamScores: payload.teamScores } : {}) }));
+      setState((current) => ({
+        ...current,
+        scores: payload.scores,
+        ...(payload.teamScores ? { teamScores: payload.teamScores } : {}),
+      }));
     const roundEnd = (payload) => {
       roundRef.current = null;
       setFeedback(null);
@@ -191,7 +197,11 @@ export default function usePlayerSession(navigate) {
     socket.on(OVER, over);
     const teamListeners = Object.values(TEAM_EVENTS).map((event) => {
       const listener = (payload) => {
-        if (event === TEAM_EVENTS.end || event === TEAM_EVENTS.turn || event === TEAM_EVENTS.chosen) {
+        if (
+          event === TEAM_EVENTS.end ||
+          event === TEAM_EVENTS.turn ||
+          event === TEAM_EVENTS.chosen
+        ) {
           roundRef.current = null;
           setFeedback(null);
         }
@@ -323,20 +333,98 @@ export default function usePlayerSession(navigate) {
       eliminated: null,
       winner: null,
       ranking: [],
+      winnerTeam: undefined,
+      line: null,
+      board: [],
+      turn: null,
+      chosen: null,
+      sitout: { A: null, B: null },
+      cardChoices: {},
+      teamScores: { A: 0, B: 0 },
     }));
   }
 
   async function chooseSquare(squareId, options = {}) {
     if (pending.current || !socket.connected) return;
-    pending.current = true; setBusy(true); setError('');
-    const response = await request(CHOOSE, { code: identityRef.current.code, squareId, ...(options.steal ? { steal: true } : {}) });
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    const turnEndsAt = state.turn?.endsAt;
+    const response = await request(CHOOSE, {
+      code: identityRef.current.code,
+      squareId,
+      ...(options.steal ? { steal: true } : {}),
+    });
     pending.current = false;
     if (!mounted.current) return;
     setBusy(false);
     if (!response?.ok) {
-      const messages = { NOT_YOUR_TURN: 'مو دور فريقك', TAKEN: 'المربع مأخوذ', NO_CARD: 'بطاقة السرقة مستخدمة', BAD_TARGET: 'اختار مربع متاح', SITTING_OUT: 'أنت تختار بطاقة فريقك هالجولة' };
-      setError(response ? messages[response.error] || 'ما قدرنا نختار المربع' : 'ما وصلنا رد. حاول مرة ثانية.');
+      const messages = {
+        NOT_YOUR_TURN: "مو دور فريقك",
+        TAKEN: "المربع مأخوذ",
+        NO_CARD: "بطاقة السرقة مستخدمة",
+        BAD_TARGET: "اختار مربع متاح",
+        SITTING_OUT: "أنت تختار بطاقة فريقك هالجولة",
+      };
+      setError(
+        response
+          ? messages[response.error] || "ما قدرنا نختار المربع"
+          : "ما وصلنا رد. حاول مرة ثانية.",
+      );
     }
+    if (response?.ok && options.steal)
+      setState((current) => {
+        if (current.turn?.endsAt !== turnEndsAt) return current;
+        const team = myTeam(current, identityRef.current.playerId);
+        return current.sitout?.[team]
+          ? {
+              ...current,
+              cardChoices: { ...current.cardChoices, [team]: "steal" },
+            }
+          : current;
+      });
+    return Boolean(response?.ok);
+  }
+
+  async function playCard(card, target) {
+    if (pending.current || !socket.connected) return false;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    const turnEndsAt = state.turn?.endsAt;
+    const response = await request(PLAY_CARD, {
+      code: identityRef.current.code,
+      card,
+      ...(target != null ? { target } : {}),
+    });
+    pending.current = false;
+    if (!mounted.current) return false;
+    setBusy(false);
+    if (!response?.ok) {
+      const messages = {
+        NO_CARD: "البطاقة مستخدمة",
+        NOT_NOW: "مو وقت هالبطاقة",
+        NOT_ALLOWED:
+          "اختيار البطاقة عند لاعب الفريق اللي يرتاح هالجولة، والاختيار نهائي",
+        BAD_TARGET: "اختار مربع مناسب للبطاقة",
+      };
+      setError(
+        response
+          ? messages[response.error] || "ما قدرنا نستخدم البطاقة"
+          : "ما وصلنا رد. حاول مرة ثانية.",
+      );
+    } else
+      setState((current) => {
+        if (current.turn?.endsAt !== turnEndsAt) return current;
+        const team = myTeam(current, identityRef.current.playerId);
+        return current.sitout?.[team]
+          ? {
+              ...current,
+              cardChoices: { ...current.cardChoices, [team]: card },
+            }
+          : current;
+      });
+    return Boolean(response?.ok);
   }
 
   return {
@@ -354,6 +442,7 @@ export default function usePlayerSession(navigate) {
     answer,
     restart,
     chooseSquare,
+    playCard,
     retry: () => reconnectAction.current?.(),
   };
 }
