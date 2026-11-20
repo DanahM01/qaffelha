@@ -1,4 +1,39 @@
-# Sprint 1 tasks (19 Oct – 1 Nov 2026)
+# Sprint 2 tasks (8 – 21 Nov 2026) — Team Mode
+
+Owner of this file: Danah. Jira (project SCRUM, epic SCRUM-31) is the live board; this is the copy agents can read.
+**Sprint goal:** players split into two teams, battle for squares on a 4x4 board, win by completing a full line, and use the Freeze, Lock, Mine and Steal cards.
+
+| Item | Jira | Task | Owner | Start | Due | Hours |
+|---|---|---|---|---|---|---|
+| PB-14 | SCRUM-18 | 4x4 board state + choose a square + battle on it (server rules + tests) | Layan | 8 Nov | 14 Nov | 8 |
+| PB-14 | SCRUM-18 | Add the Team Mode events to `EVENTS.md` (board, teams, cards) | Layan | 8 Nov | 9 Nov | 2 |
+| PB-13 | SCRUM-17 | Split players into two teams in the lobby (manual or random), team name + color | Renad | 8 Nov | 14 Nov | 6 |
+| PB-13 | SCRUM-17 | Show both teams and team scores on the big screen | Renad | 10 Nov | 14 Nov | 4 |
+| PB-15 | SCRUM-19 | Win check: full horizontal or vertical line of captured squares (+ tests) | Reef | 8 Nov | 14 Nov | 5 |
+| PB-15 | SCRUM-19 | Phone: my team, the board and the team-win screen | Reef | 10 Nov | 14 Nov | 5 |
+| PB-16 | SCRUM-20 | Freeze card: lock a rival keyboard for 3 seconds (server + phone) | Danah | 8 Nov | 14 Nov | 6 |
+| PB-28 | SCRUM-32 | Rejoin the room with the same name and score after a refresh | Leena | 8 Nov | 14 Nov | 6 |
+| PB-17 | SCRUM-21 | Lock card: the rival team's chosen square becomes harder | Leena | 15 Nov | 20 Nov | 6 |
+| PB-18 | SCRUM-22 | Mine card: hidden mine on a square, rival loses points if they lose the battle there | Renad | 15 Nov | 20 Nov | 7 |
+| PB-19 | SCRUM-24 | Steal card: win a battle on a rival square to take it | Layan | 15 Nov | 20 Nov | 7 |
+| PB-20 | SCRUM-25 | Eliminated players vote on the next card their team uses | Reef | 15 Nov | 20 Nov | 6 |
+| Test | — | Play-test Team Mode with real phones, report bugs in Jira | Reef | 19 Nov | 20 Nov | 3 |
+| Demo | — | Sprint review demo + screenshots for the report | Leena | 19 Nov | 20 Nov | 2 |
+
+## Start order (dependencies)
+1. **First (8–9 Nov):** Layan adds the Team Mode events to `EVENTS.md` so everyone codes against the same names.
+2. **Week 1 (8–14 Nov):** board (Layan), teams (Renad), line win (Reef), Freeze card (Danah) and rejoin (Leena) in parallel.
+3. **Week 2 (15–20 Nov):** the Lock, Mine and Steal cards and the vote need the board and teams from week 1.
+4. **19 Nov:** Sprint Review and Retrospective. Sprint ends 21 Nov.
+
+## Rules for Sprint 2
+- Each member builds her own story end to end. Shared files (`server/game.js`, `server/index.js`, `EVENTS.md`): add your own new functions or handlers only, never edit someone else's, and keep your PR small.
+- New socket events go into `EVENTS.md` in the same PR, and Layan approves them.
+- Branch name: `<member>/<PB-key>-short-title`, PR to `main`, never push to `main`.
+
+---
+
+# Sprint 1 tasks (19 Oct – 1 Nov 2026) — Done
 
 Owner of this file: Danah. Jira is the live board; this is the copy agents can read.
 
