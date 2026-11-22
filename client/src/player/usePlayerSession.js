@@ -2,10 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { socket } from "../socket.js";
 import { TEAM_EVENTS, applyTeamEvent, myTeam } from "./teamState.js";
+import { createSessionRecovery } from "../sessionRecovery.js";
 
 const CREATE = "room:create";
 const JOIN = "room:join";
-const REJOIN = "room:rejoin";
 const PLAYERS = "room:players";
 const START = "game:start";
 const COUNTDOWN = "round:countdown";
@@ -17,7 +17,10 @@ const ROUND_END = "round:end";
 const OVER = "game:over";
 const RESTART = "game:restart";
 const CHOOSE = "square:choose";
-const PLAY_CARD = "card:play";
+
+const CARD = "card:play";
+const CARD_PLAYED = "card:played";
+const FROZEN = "player:frozen";
 const ERRORS = {
   NOT_FOUND: "الغرفة مو موجودة",
   NAME_TAKEN: "الاسم مأخوذ",
@@ -26,6 +29,10 @@ const ERRORS = {
   FULL: "الغرفة مليانة",
   NOT_HOST: "البدء عند المضيف بس",
   NOT_ENOUGH_PLAYERS: "تحتاجون 3 لاعبين على الأقل",
+  NOT_NOW: "مو وقت البطاقة الحين",
+  NO_CARD: "فريقك استخدم البطاقة",
+  NOT_ALLOWED: "البطاقة بيد اللي جالس من فريقك",
+  BAD_TARGET: "ما فيه أحد من الخصم تجمّده",
 };
 const EMPTY = { status: "lobby", mode: null, hostId: null, players: [] };
 
@@ -35,6 +42,7 @@ function storedIdentity() {
     return value &&
       /^[A-HJ-NP-Z]{4}$/.test(value.code) &&
       typeof value.playerId === "string"
+      && value.playerId.length > 0
       ? value
       : null;
   } catch {
@@ -51,11 +59,11 @@ export default function usePlayerSession(navigate) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState(null);
+  const [cardNotice, setCardNotice] = useState(null);
   const roundRef = useRef(null);
   const offset = useRef(0);
   const mounted = useRef(false);
   const pending = useRef(false);
-  const generation = useRef(0);
   const reconnectAction = useRef(null);
   const clearError = useCallback(() => setError(""), []);
   const request = useCallback(
@@ -72,57 +80,48 @@ export default function usePlayerSession(navigate) {
 
   useEffect(() => {
     mounted.current = true;
-    const epoch = ++generation.current;
-    let reconnectRequest = 0;
-    async function reconnect() {
-      setConnected(true);
-      if (!identityRef.current) return;
-      const attempt = ++reconnectRequest;
-      setReconnecting(true);
-      const response = await request(REJOIN, identityRef.current);
-      if (
-        !mounted.current ||
-        epoch !== generation.current ||
-        attempt !== reconnectRequest
-      )
-        return;
-      setReconnecting(false);
-      if (!response) {
-        setReconnecting(true);
-        setError("ما قدرنا نرجعك للغرفة. حاول مرة ثانية.");
-        return;
-      }
-      if (!response.ok) {
-        if (response.error === "NOT_FOUND") {
-          try {
-            sessionStorage.removeItem("qaffelha");
-          } catch {
-            /* Storage may be unavailable. */
-          }
-          identityRef.current = null;
-          setIdentity(null);
-          setState(EMPTY);
-          navigate("/", { replace: true });
-        } else setError(ERRORS[response.error] || "ما قدرنا نرجعك للغرفة");
-        return;
-      }
-      offset.current = response.serverTime - Date.now();
-      roundRef.current =
-        response.state.status === "round" ? response.state.endsAt : null;
-      setState(response.state);
-      setError("");
-    }
+    const recovery = createSessionRecovery({
+      socket,
+      getIdentity: () => identityRef.current,
+      onConnected: setConnected,
+      onPending: setReconnecting,
+      onError: setError,
+      onMissing: () => {
+        try {
+          sessionStorage.removeItem("qaffelha");
+        } catch {
+          /* Storage may be unavailable. */
+        }
+        identityRef.current = null;
+        setIdentity(null);
+        setState(EMPTY);
+        setFeedback(null);
+        navigate("/", { replace: true });
+      },
+      onSnapshot: (snapshot, serverTime) => {
+        offset.current = serverTime - Date.now();
+        roundRef.current =
+          snapshot.status === "round" ? snapshot.endsAt : null;
+        setFeedback(null);
+        setCardNotice(null);
+        setState({
+          ...snapshot,
+          frozenUntil:
+            snapshot.me?.frozenUntil ?? snapshot.frozenUntil ?? null,
+        });
+      },
+    });
+    const reconnect = recovery.recover;
     const disconnect = () => {
-      ++reconnectRequest;
       roundRef.current = null;
-      setConnected(false);
-      setReconnecting(Boolean(identityRef.current));
+      setFeedback(null);
+      recovery.disconnect();
     };
     const players = (payload) =>
       setState((current) =>
-        current.gameMode !== "teams" &&
-        current.status === "over" &&
-        payload.players.every((player) => !player.out)
+        (payload.status === "lobby" && current.status !== "lobby") ||
+        (payload.status == null && current.gameMode !== "teams" && current.status === "over" &&
+          payload.players.every((player) => !player.out))
           ? { ...EMPTY, ...payload, scores: [], locked: [], me: null }
           : { ...current, ...payload },
       );
@@ -134,10 +133,12 @@ export default function usePlayerSession(navigate) {
     const roundStart = (payload) => {
       roundRef.current = payload.endsAt;
       setFeedback(null);
+      setCardNotice(null);
       setState((current) => ({
         ...current,
         ...payload,
         status: "round",
+        frozenUntil: null,
         locked: [],
         teamScores: { A: 0, B: 0 },
         scores: current.players.map(({ id }) => ({ id, score: 0 })),
@@ -158,11 +159,7 @@ export default function usePlayerSession(navigate) {
           : current,
       );
     const scores = (payload) =>
-      setState((current) => ({
-        ...current,
-        scores: payload.scores,
-        ...(payload.teamScores ? { teamScores: payload.teamScores } : {}),
-      }));
+      setState((current) => ({ ...current, ...payload }));
     const roundEnd = (payload) => {
       roundRef.current = null;
       setFeedback(null);
@@ -186,6 +183,30 @@ export default function usePlayerSession(navigate) {
       setFeedback(null);
       setState((current) => ({ ...current, ...payload, status: "over" }));
     };
+    // Team Mode cards (SPEC §17.6). Freeze: PB-16.
+    const cardPlayed = (payload) => {
+      setCardNotice({ ...payload, sequence: performance.now() });
+      setState((current) => {
+        // board:update (PB-14) sends the real counts; until then, mark the card as used.
+        const left = current.cards?.[payload.team]?.[payload.card];
+        return {
+          ...current,
+          cards: {
+            ...current.cards,
+            [payload.team]: {
+              ...current.cards?.[payload.team],
+              [payload.card]: typeof left === "number" ? Math.max(0, left - 1) : 0,
+            },
+          },
+        };
+      });
+    };
+    const frozen = (payload) =>
+      setState((current) =>
+        payload.id === identityRef.current?.playerId
+          ? { ...current, frozenUntil: payload.until }
+          : current,
+      );
     socket.on("connect", reconnect);
     socket.on("disconnect", disconnect);
     socket.on(PLAYERS, players);
@@ -210,11 +231,13 @@ export default function usePlayerSession(navigate) {
       socket.on(event, listener);
       return [event, listener];
     });
+    socket.on(CARD_PLAYED, cardPlayed);
+    socket.on(FROZEN, frozen);
     reconnectAction.current = reconnect;
     if (socket.connected) reconnect();
     return () => {
       mounted.current = false;
-      ++generation.current;
+      recovery.dispose();
       reconnectAction.current = null;
       socket.off("connect", reconnect);
       socket.off("disconnect", disconnect);
@@ -226,6 +249,8 @@ export default function usePlayerSession(navigate) {
       socket.off(ROUND_END, roundEnd);
       socket.off(OVER, over);
       teamListeners.forEach(([event, listener]) => socket.off(event, listener));
+      socket.off(CARD_PLAYED, cardPlayed);
+      socket.off(FROZEN, frozen);
     };
   }, [navigate, request]);
 
@@ -309,6 +334,31 @@ export default function usePlayerSession(navigate) {
     // Scores are rendered from score:update. An older acknowledgement must not overwrite a newer broadcast.
   }
 
+  async function playCard(card, target) {
+    if (pending.current || !identityRef.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    const response = await request(CARD, {
+      code: identityRef.current.code,
+      card,
+    });
+    pending.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    if (!response?.ok)
+      setError(
+        response
+          ? ERRORS[response.error] || "ما قدرنا نلعب البطاقة"
+          : "ما وصلنا رد. حاول مرة ثانية.",
+      );
+    if (response?.ok) setState((current) => {
+      const team = myTeam(current, identityRef.current.playerId);
+      return current.sitout?.[team] ? { ...current, cardChoices: { ...current.cardChoices, [team]: card } } : current;
+    });
+    return Boolean(response?.ok);
+  }
+
   async function restart() {
     if (pending.current) return;
     pending.current = true;
@@ -386,46 +436,6 @@ export default function usePlayerSession(navigate) {
     return Boolean(response?.ok);
   }
 
-  async function playCard(card, target) {
-    if (pending.current || !socket.connected) return false;
-    pending.current = true;
-    setBusy(true);
-    setError("");
-    const turnEndsAt = state.turn?.endsAt;
-    const response = await request(PLAY_CARD, {
-      code: identityRef.current.code,
-      card,
-      ...(target != null ? { target } : {}),
-    });
-    pending.current = false;
-    if (!mounted.current) return false;
-    setBusy(false);
-    if (!response?.ok) {
-      const messages = {
-        NO_CARD: "البطاقة مستخدمة",
-        NOT_NOW: "مو وقت هالبطاقة",
-        NOT_ALLOWED:
-          "اختيار البطاقة عند لاعب الفريق اللي يرتاح هالجولة، والاختيار نهائي",
-        BAD_TARGET: "اختار مربع مناسب للبطاقة",
-      };
-      setError(
-        response
-          ? messages[response.error] || "ما قدرنا نستخدم البطاقة"
-          : "ما وصلنا رد. حاول مرة ثانية.",
-      );
-    } else
-      setState((current) => {
-        if (current.turn?.endsAt !== turnEndsAt) return current;
-        const team = myTeam(current, identityRef.current.playerId);
-        return current.sitout?.[team]
-          ? {
-              ...current,
-              cardChoices: { ...current.cardChoices, [team]: card },
-            }
-          : current;
-      });
-    return Boolean(response?.ok);
-  }
 
   return {
     identity,
@@ -440,9 +450,10 @@ export default function usePlayerSession(navigate) {
     offset,
     feedback,
     answer,
+    playCard,
+    cardNotice,
     restart,
     chooseSquare,
-    playCard,
     retry: () => reconnectAction.current?.(),
   };
 }

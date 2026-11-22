@@ -54,7 +54,7 @@ export default function TeamCardChoices({
       </p>
       {permitted && (
         <div className="q-team-cards__buttons">
-          {Object.entries(CARD_NAMES).map(([card, title]) => (
+          {Object.entries(CARD_NAMES).filter(([card]) => card !== "freeze").map(([card, title]) => (
             <button
               type="button"
               className="q-btn"

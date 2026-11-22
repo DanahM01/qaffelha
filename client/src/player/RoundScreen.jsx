@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { EyeIcon, LockIcon, SendIcon } from "../theme/Logo.jsx";
+import { EyeIcon, LockIcon, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
 import { isSittingOut } from "./teamState.js";
 
@@ -9,8 +9,9 @@ const MESSAGES = {
   wrong: "مو من الفئة، جرّب غيرها",
   repeat: "كتبتها قبل، ما تنحسب مرتين",
   closed: "انتهى وقت الإجابة",
-  frozen: "متجمّد شوي… انتظر ترجع تكتب",
+  frozen: "متجمّد! استنى ثواني",
 };
+const TEAM_NAMES = { A: "الفريق الأول", B: "الفريق الثاني" };
 
 export default function RoundScreen({
   state,
@@ -19,8 +20,12 @@ export default function RoundScreen({
   feedback,
   disabled,
   onAnswer,
+  onCard,
+  cardBusy,
+  cardNotice,
 }) {
   const seconds = useServerSeconds(state.endsAt, offset);
+  const frozenSeconds = useServerSeconds(state.frozenUntil, offset);
   const [text, setText] = useState("");
   const input = useRef(null);
   const scores = new Map(
@@ -36,7 +41,16 @@ export default function RoundScreen({
     1 + active.filter((player) => (scores.get(player.id) || 0) > score).length;
   const timerClass =
     seconds <= 5 ? "is-danger" : seconds <= 10 ? "is-warn" : "";
-  const closed = disabled || seconds === 0 || out;
+  const frozen = frozenSeconds > 0;
+  const closed = disabled || seconds === 0 || out || frozen;
+  // Freeze card (PB-16, SPEC §17.6): Team Mode only, during the battle, not in its last 3 seconds.
+  const team = me?.team ?? state.me?.team ?? null;
+  const teams = state.gameMode === "teams" && Boolean(team);
+  const freezeLeft = state.cards?.[team]?.freeze ?? 1;
+  const chooserId = state.sitout?.[team] ?? null;
+  const mayPlayCard = !chooserId || chooserId === meId;
+  const canFreeze =
+    teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && !state.cardChoices?.[team] && seconds > 3;
 
   function submit(event) {
     event.preventDefault();
@@ -105,10 +119,20 @@ export default function RoundScreen({
       </div>
       <div className="q-m-dock">
         <div aria-live="polite" role="status">
+          {cardNotice?.card === "freeze" && (
+            <div key={cardNotice.sequence} className="q-card-notice q-m-toast">
+              <SnowflakeIcon />
+              <span>
+                {cardNotice.target?.id === meId
+                  ? `${cardNotice.by.name} جمّدك!`
+                  : `${cardNotice.by.name} (${TEAM_NAMES[cardNotice.team]}) جمّد ${cardNotice.target?.name}`}
+              </span>
+            </div>
+          )}
           {feedback && !out && (
             <div
               key={feedback.sequence}
-              className={`q-feedback q-feedback--${["correct", "locked", "repeat"].includes(feedback.result) ? feedback.result : "wrong"} q-m-toast`}
+              className={`q-feedback q-feedback--${["correct", "locked", "repeat", "frozen"].includes(feedback.result) ? feedback.result : "wrong"} q-m-toast`}
             >
               <span className="q-feedback__pts">
                 {feedback.delta > 0
@@ -126,6 +150,24 @@ export default function RoundScreen({
             </div>
           )}
         </div>
+        {teams && (
+            <div className="q-card-play">
+              <button
+                type="button"
+                className="q-btn q-btn--sm q-card-btn q-card-btn--freeze"
+                disabled={!canFreeze}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => onCard("freeze")}
+                aria-label="بطاقة التجميد: تجمّد أقوى لاعب في الخصم 3 ثواني"
+              >
+                <SnowflakeIcon />
+                تجميد
+                <span className="q-card-btn__left">
+                  {freezeLeft > 0 ? "×1" : "انلعبت"}
+                </span>
+              </button>
+            </div>
+          )}
         {out ? (
           <p className="q-spectate">
             <EyeIcon />
@@ -134,6 +176,16 @@ export default function RoundScreen({
               : "طلعت من اللعبة — تتفرج"}
           </p>
         ) : (
+          <>
+
+          <div className="q-frozen-wrap">
+          {frozen && (
+            <div className="q-frozen" role="alert">
+              <SnowflakeIcon />
+              <span>تجمّدت!</span>
+              <span className="q-frozen__num q-ltr">{frozenSeconds}</span>
+            </div>
+          )}
           <form className="q-answer-bar" onSubmit={submit}>
             <label className="q-sr-only" htmlFor="answer">
               إجابتك
@@ -163,6 +215,8 @@ export default function RoundScreen({
               <SendIcon size="1.4em" />
             </button>
           </form>
+          </div>
+          </>
         )}
       </div>
     </>

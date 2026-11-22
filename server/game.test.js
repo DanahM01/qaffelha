@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, stateSnapshot } from './game.js';
+  playersPayload, scoresPayload, stateSnapshot, FREEZE_MS, newTeamCards, cardPlayError, freezeTarget,
+  playFreeze } from './game.js';
 
 const documents = [{ _id: 'fruit', title: 'فواكه', answers: ['تفاحة', 'موز', 'برتقال'],
   aliases: { برتقال: ['بردقان'] } }];
@@ -177,4 +178,73 @@ test('public payloads and reconnect snapshot contain no answer index or private 
   assert.deepEqual(Object.keys(playersPayload(room).players[0]), ['id', 'name', 'out', 'connected']);
   assert.equal(JSON.stringify(state).includes('socket-'), false);
   assert.equal(JSON.stringify(state).includes('answers'), false);
+});
+
+// ---- PB-16 Freeze card (SPEC §17.6) ----
+function teamFixture() {
+  const room = fixture(4);
+  room.gameMode = 'teams';
+  room.cards = { A: newTeamCards(), B: newTeamCards() };
+  room.sitout = { A: null, B: null };
+  ['A', 'A', 'B', 'B'].forEach((team, i) => room.players.set(String(i), { ...room.players.get(String(i)), team }));
+  return room; // round is running: startsAt 1000, endsAt 21000
+}
+function withScores(room, scores) {
+  const players = new Map(room.players);
+  for (const [id, score] of Object.entries(scores)) players.set(id, { ...players.get(id), score });
+  return { ...room, players };
+}
+
+test('freeze: who may play it (team mode, own team card, sitting-out rule)', () => {
+  const room = teamFixture();
+  assert.equal(cardPlayError({ ...room, gameMode: undefined }, '0', 'freeze'), 'NOT_NOW');
+  assert.equal(cardPlayError(room, 'nobody', 'freeze'), 'NOT_ALLOWED');
+  assert.equal(cardPlayError(room, '0', 'freeze'), null);
+  assert.equal(cardPlayError({ ...room, sitout: { A: '1', B: null } }, '0', 'freeze'), 'NOT_ALLOWED');
+  assert.equal(cardPlayError({ ...room, sitout: { A: '1', B: null } }, '1', 'freeze'), null);
+  assert.equal(cardPlayError({ ...room, cards: { ...room.cards, A: { ...room.cards.A, freeze: 0 } } }, '0', 'freeze'), 'NO_CARD');
+});
+
+test('freeze: targets the top-scoring rival, random on ties, skips sitting-out players', () => {
+  const room = withScores(teamFixture(), { 0: 5, 1: 0, 2: 2, 3: 4 });
+  assert.equal(freezeTarget(room, 'A', 0).id, '3');
+  assert.equal(freezeTarget(room, 'B', 0.9).id, '0');
+  const tie = withScores(room, { 2: 4, 3: 4 });
+  assert.equal(freezeTarget(tie, 'A', 0).id, '2');
+  assert.equal(freezeTarget(tie, 'A', 0.99).id, '3');
+  assert.equal(freezeTarget({ ...room, sitout: { A: null, B: '3' } }, 'A', 0).id, '2');
+  assert.equal(freezeTarget({ ...room, sitout: { A: null, B: '3' }, players: new Map([...room.players].filter(([id]) => id !== '2')) }, 'A', 0), null);
+});
+
+test('freeze: blocks the target for exactly 3 seconds, uses the card, never changes the input room', () => {
+  const room = withScores(teamFixture(), { 2: 1, 3: 3 });
+  const before = room.cards.A.freeze;
+  const played = playFreeze(room, '0', 5000, 0);
+  assert.equal(played.error, undefined);
+  assert.deepEqual(played.target, { id: '3', name: 'لاعب 3' });
+  assert.deepEqual(played.by, { id: '0', name: 'لاعب 0' });
+  assert.equal(played.team, 'A');
+  assert.equal(played.until, 5000 + FREEZE_MS);
+  assert.equal(played.room.cards.A.freeze, 0);
+  assert.equal(played.room.cards.B.freeze, 1);
+  assert.equal(room.cards.A.freeze, before);
+  assert.equal(room.players.get('3').frozenUntil, null);
+  assert.equal(submitAnswer(played.room, '3', 'موز', 5000).ack.result, 'frozen');
+  assert.equal(submitAnswer(played.room, '3', 'موز', 7999).ack.result, 'frozen');
+  assert.equal(submitAnswer(played.room, '3', 'موز', 8000).ack.result, 'correct');
+  assert.equal(submitAnswer(played.room, '2', 'موز', 5000).ack.result, 'correct');
+  assert.equal(stateSnapshot(played.room, '3').me.frozenUntil, 8000);
+  assert.equal(playFreeze(played.room, '1', 6000, 0).error, 'NO_CARD');
+  assert.equal(playFreeze(played.room, '2', 6000, 0).error, undefined); // team B still has its card
+});
+
+test('freeze: only during a running battle and not in its last 3 seconds; reset by next round and restart', () => {
+  const room = teamFixture();
+  assert.equal(playFreeze({ ...room, status: 'countdown' }, '0', 5000, 0).error, 'NOT_NOW');
+  assert.equal(playFreeze(room, '0', room.endsAt - FREEZE_MS, 0).error, 'NOT_NOW');
+  assert.equal(playFreeze(room, '0', room.endsAt - FREEZE_MS - 1, 0).error, undefined);
+  assert.equal(playFreeze({ ...room, gameMode: 'classic' }, '0', 5000, 0).error, 'NOT_NOW');
+  const frozen = playFreeze(room, '0', 5000, 0).room;
+  assert.ok([...startRound({ ...frozen, startsAt: 30000 }).players.values()].every((p) => p.frozenUntil === null));
+  assert.ok([...restartRoom(frozen).players.values()].every((p) => p.frozenUntil === null));
 });

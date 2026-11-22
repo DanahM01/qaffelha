@@ -332,7 +332,7 @@ io.on("connection", (socket) => {
       "chooser cannot answer",
     );
     await chooser
-      .getByRole("button", { name: "تجميد، المتبقي 1", exact: true })
+      .getByRole("button", { name: "بطاقة التجميد: تجمّد أقوى لاعب في الخصم 3 ثواني", exact: true })
       .click();
     await chooser
       .getByText("اختيارك: تجميد — تم تثبيته لهالجولة", { exact: true })

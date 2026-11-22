@@ -171,6 +171,64 @@ test('player rejoin restores state and revokes the replaced socket', () => {
   h.dispose();
 });
 
+for (const status of ['lobby', 'countdown', 'round', 'roundEnd', 'over']) {
+  for (const mode of ['screen', 'phone']) test(`PB-28: ${mode} player refresh restores ${status} without creating an identity`, () => {
+    const h = harness();
+    try {
+      const { host, code, players } = h.lobby(mode);
+      const old = players[0];
+      const playerId = old.data.playerId;
+      const room = h.rooms.get(code);
+      const name = room.players.get(playerId).name;
+      if (status !== 'lobby') host.request('game:start', { code });
+      if (['round', 'roundEnd', 'over'].includes(status)) {
+        h.advance(3000);
+        old.request('answer:submit', { code, text: 'موز' });
+      }
+      if (status === 'roundEnd') h.advance(20000);
+      if (status === 'over') h.advance(53000);
+      const before = h.rooms.get(code);
+      const score = before.players.get(playerId).score;
+      const endsAt = before.endsAt;
+      old.disconnect();
+      const fresh = h.connect();
+      const ack = fresh.request('room:rejoin', { code, playerId });
+      assert.equal(ack.ok, true);
+      assert.equal(ack.state.status, status);
+      assert.equal(ack.state.me.id, playerId);
+      assert.equal(ack.state.me.score, score);
+      assert.equal(ack.state.players.find(player => player.id === playerId).name, name);
+      assert.equal(ack.state.players.length, 3);
+      assert.equal(h.rooms.get(code).players.size, 3);
+      assert.equal(ack.state.endsAt, endsAt);
+      if (status === 'roundEnd') assert.deepEqual(ack.state.eliminated, host.latest('round:end').eliminated);
+      if (status === 'over') {
+        assert.deepEqual(ack.state.winner, host.latest('game:over').winner);
+        assert.deepEqual(ack.state.ranking, host.latest('game:over').ranking);
+      }
+    } finally { h.dispose(); }
+  });
+}
+
+test('PB-28: eliminated refresh stays out and repeated refreshes preserve the same slot', () => {
+  const h = harness();
+  try {
+    const { host, code } = h.lobby();
+    host.request('game:start', { code });
+    h.advance(23000);
+    const { id } = host.latest('round:end').eliminated;
+    for (let i = 0; i < 3; i++) {
+      const fresh = h.connect();
+      const ack = fresh.request('room:rejoin', { code, playerId: id });
+      assert.equal(ack.state.me.out, true);
+      assert.equal(ack.state.eliminated.id, id);
+      assert.equal(ack.state.players.length, 3);
+      assert.equal(fresh.request('answer:submit', { code, text: 'موز' }).result, 'closed');
+      fresh.disconnect();
+    }
+  } finally { h.dispose(); }
+});
+
 test('screen host rejoins with its private identity and old host loses controls', () => {
   const h = harness();
   const { host, created, code } = h.lobby();
@@ -297,4 +355,36 @@ test('real Socket.IO polling transport delivers acknowledgements, room broadcast
   const rejoined = await player.request('room:rejoin', { code: created.code, playerId: joined.playerId });
   assert.equal(rejoined.state.me.id, joined.playerId);
   assert.equal(rejoined.state.status, 'lobby');
+});
+
+test('PB-16 freeze card over sockets: announce, freeze the top rival for 3 s, one per team, classic refuses', () => {
+  const h = harness();
+  const { host, code, players } = h.lobby('screen');
+  const extra = h.connect();
+  extra.identity = extra.request('room:join', { code, name: 'لاعب 3' });
+  players.push(extra);
+  assert.deepEqual(players[0].request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_NOW' });
+  host.request('game:start', { code });
+  h.advance(3000);
+  // Team Mode setup normally comes from PB-13/PB-14; set it directly here.
+  const room = h.rooms.get(code);
+  const teamOf = new Map(players.map((socket, i) => [socket.identity.playerId, i < 2 ? 'A' : 'B']));
+  h.rooms.set(code, { ...room, gameMode: 'teams', sitout: { A: null, B: null },
+    cards: { A: { freeze: 1, lock: 1, mine: 1, steal: 1 }, B: { freeze: 1, lock: 1, mine: 1, steal: 1 } },
+    players: new Map([...room.players].map(([id, p]) => [id, { ...p, team: teamOf.get(id) }])) });
+  assert.equal(players[3].request('answer:submit', { code, text: 'موز' }).result, 'correct');
+  assert.deepEqual(players[0].request('card:play', { code, card: 'freeze' }), { ok: true });
+  const target = { id: players[3].identity.playerId, name: 'لاعب 3' };
+  assert.deepEqual(host.latest('card:played'), { team: 'A', card: 'freeze',
+    by: { id: players[0].identity.playerId, name: 'لاعب 0' }, target });
+  const frozen = players[3].latest('player:frozen');
+  assert.equal(frozen.id, target.id);
+  assert.equal(frozen.until - 103000 >= 3000, true);
+  assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'frozen');
+  assert.deepEqual(players[1].request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NO_CARD' });
+  assert.deepEqual(players[1].request('card:play', { code, card: 'lock' }), { ok: false, error: 'NO_CARD' });
+  assert.deepEqual(h.connect().request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_ALLOWED' });
+  h.advance(3000);
+  assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'correct');
+  h.dispose();
 });

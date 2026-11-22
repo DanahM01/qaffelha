@@ -7,12 +7,13 @@ import { Server } from 'socket.io';
 import { MongoClient } from 'mongodb';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, stateSnapshot, teamGameResult, prepareTeamSitouts } from './game.js';
+  playersPayload, scoresPayload, rejoinSnapshot, playFreeze, teamGameResult, prepareTeamSitouts } from './game.js';
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
   submit: 'answer:submit', locked: 'answer:locked', score: 'score:update', end: 'round:end',
-  over: 'game:over', restart: 'game:restart' });
+  over: 'game:over', restart: 'game:restart',
+  card: 'card:play', cardPlayed: 'card:played', frozen: 'player:frozen' });
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const payloadObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const roomCode = (value) => typeof value === 'string' && /^[A-Za-z]{4}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
@@ -25,7 +26,7 @@ export function completeTeamGame(io, rooms, code) {
   if (room.status === 'over') return true;
   const result = teamGameResult(room.board, room.teamPoints, room.cards);
   if (!result) return false;
-  rooms.set(code, { ...room, status: 'over', teamResult: result });
+  rooms.set(code, { ...room, status: 'over', gameOver: result });
   io.to(code).emit(EVENTS.over, result);
   return true;
 }
@@ -194,7 +195,8 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       const screenHost = room?.mode === 'screen' && typeof input.hostToken === 'string' && input.hostToken === room.hostToken;
       if (!room || (!player && !screenHost)) return ack({ ok: false, error: 'NOT_FOUND' });
       bind(socket, room, player);
-      ack({ ok: true, state: stateSnapshot(room, player?.id), serverTime: now() });
+      const serverTime = now();
+      ack({ ok: true, state: rejoinSnapshot(room, player?.id, serverTime), serverTime });
       publishPlayers(room);
     });
     handle(EVENTS.start, (input, ack) => {
@@ -218,6 +220,25 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       ack(result.ack);
       if (result.word) emit(result.room, EVENTS.locked, { word: result.word, by: { id: player.id, name: player.name } });
       if (result.ack.delta) emit(result.room, EVENTS.score, scoresPayload(result.room));
+    });
+    handle(EVENTS.card, (input, ack) => {
+      const room = rooms.get(roomCode(input.code));
+      const player = room?.players.get(socket.data.playerId);
+      if (!room || socket.data.code !== room.code || player?.socketId !== socket.id) {
+        return ack({ ok: false, error: 'NOT_ALLOWED' });
+      }
+      if (input.card === 'freeze') {
+        const result = playFreeze(room, player.id, now(), random());
+        if (result.error) return ack({ ok: false, error: result.error });
+        rooms.set(room.code, result.room);
+        ack({ ok: true });
+        emit(result.room, EVENTS.cardPlayed, { team: result.team, card: 'freeze', by: result.by, target: result.target });
+        emit(result.room, EVENTS.frozen, { id: result.target.id, until: result.until });
+        log(`room ${room.code} card freeze`);
+        return;
+      }
+      // lock, mine and steal are added by their own stories (SPEC §17.6).
+      ack({ ok: false, error: 'NO_CARD' });
     });
     handle(EVENTS.restart, (input, ack) => {
       const room = rooms.get(roomCode(input.code));

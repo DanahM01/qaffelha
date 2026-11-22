@@ -165,6 +165,9 @@ export default function PlayerApp() {
                   feedback={session.feedback}
                   disabled={!session.connected || session.reconnecting}
                   onAnswer={session.answer}
+                  onCard={session.playCard}
+                  cardBusy={session.busy}
+                  cardNotice={session.cardNotice}
                 />
               </>
             ) : session.state.status === "roundEnd" ? (
