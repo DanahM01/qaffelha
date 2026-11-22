@@ -15,6 +15,9 @@ const SCORES = "score:update";
 const ROUND_END = "round:end";
 const OVER = "game:over";
 const RESTART = "game:restart";
+const CARD = "card:play";
+const CARD_PLAYED = "card:played";
+const FROZEN = "player:frozen";
 const ERRORS = {
   NOT_FOUND: "الغرفة مو موجودة",
   NAME_TAKEN: "الاسم مأخوذ",
@@ -23,6 +26,10 @@ const ERRORS = {
   FULL: "الغرفة مليانة",
   NOT_HOST: "البدء عند المضيف بس",
   NOT_ENOUGH_PLAYERS: "تحتاجون 3 لاعبين على الأقل",
+  NOT_NOW: "مو وقت البطاقة الحين",
+  NO_CARD: "فريقك استخدم البطاقة",
+  NOT_ALLOWED: "البطاقة بيد اللي جالس من فريقك",
+  BAD_TARGET: "ما فيه أحد من الخصم تجمّده",
 };
 const EMPTY = { status: "lobby", mode: null, hostId: null, players: [] };
 
@@ -49,6 +56,7 @@ export default function usePlayerSession(navigate) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState(null);
+  const [cardNotice, setCardNotice] = useState(null);
   const roundRef = useRef(null);
   const offset = useRef(0);
   const mounted = useRef(false);
@@ -92,7 +100,12 @@ export default function usePlayerSession(navigate) {
         roundRef.current =
           snapshot.status === "round" ? snapshot.endsAt : null;
         setFeedback(null);
-        setState(snapshot);
+        setCardNotice(null);
+        setState({
+          ...snapshot,
+          frozenUntil:
+            snapshot.me?.frozenUntil ?? snapshot.frozenUntil ?? null,
+        });
       },
     });
     const reconnect = recovery.recover;
@@ -117,10 +130,12 @@ export default function usePlayerSession(navigate) {
     const roundStart = (payload) => {
       roundRef.current = payload.endsAt;
       setFeedback(null);
+      setCardNotice(null);
       setState((current) => ({
         ...current,
         ...payload,
         status: "round",
+        frozenUntil: null,
         locked: [],
         scores: current.players.map(({ id }) => ({ id, score: 0 })),
       }));
@@ -164,6 +179,30 @@ export default function usePlayerSession(navigate) {
       setFeedback(null);
       setState((current) => ({ ...current, ...payload, status: "over" }));
     };
+    // Team Mode cards (SPEC §17.6). Freeze: PB-16.
+    const cardPlayed = (payload) => {
+      setCardNotice({ ...payload, sequence: performance.now() });
+      setState((current) => {
+        // board:update (PB-14) sends the real counts; until then, mark the card as used.
+        const left = current.cards?.[payload.team]?.[payload.card];
+        return {
+          ...current,
+          cards: {
+            ...current.cards,
+            [payload.team]: {
+              ...current.cards?.[payload.team],
+              [payload.card]: typeof left === "number" ? Math.max(0, left - 1) : 0,
+            },
+          },
+        };
+      });
+    };
+    const frozen = (payload) =>
+      setState((current) =>
+        payload.id === identityRef.current?.playerId
+          ? { ...current, frozenUntil: payload.until }
+          : current,
+      );
     socket.on("connect", reconnect);
     socket.on("disconnect", disconnect);
     socket.on(PLAYERS, players);
@@ -173,6 +212,8 @@ export default function usePlayerSession(navigate) {
     socket.on(SCORES, scores);
     socket.on(ROUND_END, roundEnd);
     socket.on(OVER, over);
+    socket.on(CARD_PLAYED, cardPlayed);
+    socket.on(FROZEN, frozen);
     reconnectAction.current = reconnect;
     if (socket.connected) reconnect();
     return () => {
@@ -188,6 +229,8 @@ export default function usePlayerSession(navigate) {
       socket.off(SCORES, scores);
       socket.off(ROUND_END, roundEnd);
       socket.off(OVER, over);
+      socket.off(CARD_PLAYED, cardPlayed);
+      socket.off(FROZEN, frozen);
     };
   }, [navigate, request]);
 
@@ -271,6 +314,26 @@ export default function usePlayerSession(navigate) {
     // Scores are rendered from score:update. An older acknowledgement must not overwrite a newer broadcast.
   }
 
+  async function playCard(card) {
+    if (pending.current || !identityRef.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    const response = await request(CARD, {
+      code: identityRef.current.code,
+      card,
+    });
+    pending.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    if (!response?.ok)
+      setError(
+        response
+          ? ERRORS[response.error] || "ما قدرنا نلعب البطاقة"
+          : "ما وصلنا رد. حاول مرة ثانية.",
+      );
+  }
+
   async function restart() {
     if (pending.current) return;
     pending.current = true;
@@ -311,6 +374,8 @@ export default function usePlayerSession(navigate) {
     offset,
     feedback,
     answer,
+    playCard,
+    cardNotice,
     restart,
     retry: () => reconnectAction.current?.(),
   };

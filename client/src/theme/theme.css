@@ -2327,3 +2327,61 @@ body {
 @media (min-width: 900px) and (hover: hover) and (pointer: fine) {
   :root { --q-player-max: 600px; }
 }
+
+/* ===== Sprint 2 — بطاقة التجميد (PB-16، دانة) ===== */
+/* زر البطاقة على الجوال: فوق خانة الكتابة */
+.q-card-play { display: flex; justify-content: flex-start; margin-bottom: var(--q-space-2); }
+.q-card-btn--freeze { --_bg: var(--q-card-freeze); --_fg: var(--q-ink); }
+.q-card-btn--freeze:disabled { --_bg: var(--q-panel); --_fg: var(--q-text-muted); border-color: var(--q-text-muted); box-shadow: none; }
+.q-card-btn svg { width: 1.3em; height: 1.3em; }
+.q-card-btn__left { font-size: var(--q-fs-xs); opacity: 0.8; }
+
+/* اللاعب المتجمّد: غطاء فوق خانة الكتابة */
+.q-frozen {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--q-space-3);
+  border: var(--q-line) solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  background: var(--q-card-freeze);
+  color: var(--q-ink);
+  font-size: var(--q-fs-lg);
+  font-weight: var(--q-fw-heavy);
+  animation: q-pop 240ms var(--q-ease-bounce) both;
+}
+.q-frozen svg { width: 1.6em; height: 1.6em; animation: q-freeze-spin 3s linear infinite; }
+.q-frozen__num { font-family: var(--q-font-led); font-size: var(--q-fs-2xl); }
+.q-frozen-wrap { position: relative; }
+@keyframes q-freeze-spin { to { rotate: 1turn; } }
+.q-feedback--frozen { --_bg: var(--q-card-freeze); --_fg: var(--q-ink); --_pts: var(--q-ink); }
+
+/* إعلان البطاقة على الجوال والشاشة الكبيرة */
+.q-card-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) var(--q-space-4);
+  border: var(--q-line-thin) solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  background: var(--q-card-freeze);
+  color: var(--q-ink);
+  font-weight: var(--q-fw-bold);
+  box-shadow: var(--q-shadow-stack);
+  animation: q-pop 320ms var(--q-ease-bounce) both, q-m-toast-out 300ms ease-in 2.7s forwards;
+}
+.q-card-notice svg { flex: none; width: 1.3em; height: 1.3em; }
+.q-card-notice--tv { font-size: var(--q-fs-tv-body); }
+.q-card-notice__team-A { color: var(--q-team-a); }
+.q-card-notice__team-B { color: var(--q-team-b); }
+.q-flap__row.is-frozen .q-flap__tile--name { background: var(--q-card-freeze); color: var(--q-ink); }
+.q-flap__frozen { display: inline-flex; align-items: center; justify-content: center; color: var(--q-card-freeze); }
+.q-flap__frozen svg { width: 0.9em; height: 0.9em; }
+
+@media (prefers-reduced-motion: reduce) {
+  .q-frozen svg { animation: none; }
+  .q-card-notice { animation: q-m-toast-out 300ms ease-in 2.7s forwards; }
+}

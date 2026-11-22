@@ -3,6 +3,9 @@ import { useEffect, useState } from 'react';
 import RoundTimer from './RoundTimer.jsx';
 import LockedWords from './LockedWords.jsx';
 import Scoreboard from './Scoreboard.jsx';
+import { SnowflakeIcon } from '../theme/Logo.jsx';
+
+const TEAM_NAMES = { A: 'الفريق الأول', B: 'الفريق الثاني' };
 
 const AR = (n) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]);
 
@@ -22,13 +25,24 @@ function useShortScreen() {
   return short;
 }
 
-export default function RoundScreen({ round, category, endsAt, clockOffset, locked, players, scores }) {
+export default function RoundScreen({ round, category, endsAt, clockOffset, locked, players, scores, cardNotice = null, frozenIds = [] }) {
   const short = useShortScreen();
 
   return (
     <div className="q-screen-host q-host-fit q-host-round">
       <div className="q-spread">
         <span className="q-round-label">الجولة {AR(round)}</span>
+        <div aria-live="polite" role="status">
+          {cardNotice?.card === 'freeze' && (
+            <span key={cardNotice.sequence} className="q-card-notice q-card-notice--tv">
+              <SnowflakeIcon />
+              <span>
+                <b className={`q-card-notice__team-${cardNotice.team}`}>{cardNotice.by.name}</b>
+                {' '}({TEAM_NAMES[cardNotice.team]}) جمّد <b>{cardNotice.target?.name}</b> ٣ ثواني
+              </span>
+            </span>
+          )}
+        </div>
       </div>
       <div className="q-host-grid" style={short ? SHORT_COLUMNS : undefined}>
         <div className="q-host-round__main">
@@ -36,7 +50,7 @@ export default function RoundScreen({ round, category, endsAt, clockOffset, lock
           <h1 className="q-category">{category.title}</h1>
           <LockedWords locked={locked} />
         </div>
-        <div className="q-side-board"><Scoreboard players={players} scores={scores} /></div>
+        <div className="q-side-board"><Scoreboard players={players} scores={scores} frozenIds={frozenIds} /></div>
       </div>
     </div>
   );

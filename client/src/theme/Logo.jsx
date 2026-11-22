@@ -204,6 +204,13 @@ export const CrownIcon = (p) => (
     <path d="M3 8l6 5 7-9 7 9 6-5-2.5 13h-21z" fill="currentColor" />
   </Icon>
 );
+// Freeze card (PB-16).
+export const SnowflakeIcon = (p) => (
+  <Icon {...p}>
+    <path d="M12 2.5v19M3.8 7.25l16.4 9.5M3.8 16.75l16.4-9.5" />
+    <path d="M9.5 4.5L12 7l2.5-2.5M9.5 19.5L12 17l2.5 2.5M4 10.6l3.4.9-.9 3.4M20 13.4l-3.4-.9.9-3.4M4 13.4l3.4-.9-.9-3.4M20 10.6l-3.4.9.9 3.4" />
+  </Icon>
+);
 export const CheckIcon = (p) => (<Icon {...p}><path d="M5 12.5l4.5 4.5L19 7.5" /></Icon>);
 export const XIcon = (p) => (<Icon {...p}><path d="M6 6l12 12M18 6L6 18" /></Icon>);
 export const EyeIcon = (p) => (
