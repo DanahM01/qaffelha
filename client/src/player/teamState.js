@@ -49,12 +49,13 @@ export function applyTeamEvent(state, event, payload) {
         status: "turn",
         turn: payload,
         chosen: null,
+        cardWindowEndsAt: null,
         battleResult: null,
         cardChoices: {},
         teamScores: { A: 0, B: 0 },
       };
     case TEAM_EVENTS.chosen:
-      return { ...state, status: "cardWindow", chosen: payload };
+      return { ...state, status: "cardWindow", chosen: payload, cardWindowEndsAt: payload.cardWindowEndsAt };
     case TEAM_EVENTS.end:
       return {
         ...state,

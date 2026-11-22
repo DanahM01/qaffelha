@@ -6,6 +6,7 @@ import {
   teamCardPermission,
   recordTeamCardChoice,
   submitTeamAnswer,
+  playTeamFreeze,
 } from "./game.js";
 import { publishTeamSitouts } from "./index.js";
 
@@ -123,4 +124,17 @@ test("sit-out delivery is room-scoped and idempotent for the same battle", () =>
   assert.deepEqual(messages, [
     { code: "QAFL", event: "team:sitout", payload: { A: "p0", B: "p3" } },
   ]);
+});
+
+test("PB-20 Freeze fixes a valid choice without retaining failed attempts", () => {
+  const room = { ...prepareTeamSitouts(fixture()), status: 'cardWindow', endsAt: 20000 };
+  assert.equal(playTeamFreeze(room, 'p0', 1000, 0).error, 'NOT_NOW');
+  assert.deepEqual(room.cardChoices, {});
+  room.status = 'round';
+  const result = playTeamFreeze(room, 'p0', 1000, 0);
+  assert.equal(result.error, undefined);
+  assert.equal(result.room.cardChoices.A, 'freeze');
+  assert.equal(result.room.cards.A.freeze, 0);
+  assert.equal(room.cards.A.freeze, 1);
+  assert.equal(playTeamFreeze(result.room, 'p0', 1001, 0).error, 'NOT_ALLOWED');
 });

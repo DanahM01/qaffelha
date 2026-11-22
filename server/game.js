@@ -231,6 +231,7 @@ export function rejoinSnapshot(room, playerId, now) {
     Object.fromEntries(['freeze', 'lock', 'mine', 'steal'].map(card => [card, room.cards?.[id]?.[card] ?? 0]))]));
   state.teamPoints = { A: room.teamPoints?.A ?? 0, B: room.teamPoints?.B ?? 0 };
   state.sitout = sitout;
+  state.cardChoices = { A: room.cardChoices?.A ?? null, B: room.cardChoices?.B ?? null };
   state.frozenUntil = player?.frozenUntil > now ? player.frozenUntil : null;
   state.me = player ? { id: player.id, team, out: player.out, score: player.score,
     sittingOut: team !== null && sitout[team] === player.id } : null;
@@ -241,6 +242,138 @@ export function rejoinSnapshot(room, playerId, now) {
     state.squares = { A: result.squares.A, B: result.squares.B };
   }
   return state;
+}
+
+// PB-14 / PB-19. Team engine; randomness and deadlines are supplied by the transport.
+export const TEAM_LIMITS = Object.freeze({ turn: 15000, cards: 5000, results: 4000, squares: 16 });
+const otherTeam = team => team === 'A' ? 'B' : 'A';
+
+// Preserve manual assignments; fill gaps and move the latest joiners to balance.
+// Callers shuffle the input first when an explicitly random split is requested.
+export function assignTeams(players, current = new Map(), balance = true) {
+  const result = new Map(players.map(player => [player.id, { ...player,
+    team: current.get(player.id)?.team ?? player.team ?? null }]));
+  const count = team => [...result.values()].filter(player => player.team === team).length;
+  for (const player of result.values()) {
+    if (!['A', 'B'].includes(player.team)) player.team = count('A') <= count('B') ? 'A' : 'B';
+  }
+  while (balance && Math.abs(count('A') - count('B')) > 1) {
+    const larger = count('A') > count('B') ? 'A' : 'B';
+    const latest = [...result.values()].reverse().find(player => player.team === larger);
+    latest.team = otherTeam(larger);
+  }
+  return result;
+}
+
+export function beginTeamGame(room, categories, randomValues) {
+  if (room.players.size < 4) return { error: 'NOT_ENOUGH_PLAYERS' };
+  if (new Set(categories.map(category => category.id)).size < TEAM_LIMITS.squares) return { error: 'NOT_ENOUGH_CATEGORIES' };
+  const ordered = room.joinOrder.map(id => room.players.get(id));
+  const players = assignTeams(ordered, room.players);
+  const board = [];
+  let used = new Set();
+  for (let id = 0; id < TEAM_LIMITS.squares; id++) {
+    const selected = selectCategory(categories, used, randomValues[id]);
+    used = selected.usedCategoryIds;
+    board.push({ id, category: selected.category, owner: null, mine: null });
+  }
+  return { room: { ...room, players, gameMode: 'teams', board, usedCategoryIds: used,
+    round: 0, category: null, startsAt: null, endsAt: null, locked: new Map(), eliminatedOrder: [],
+    cards: { A: newTeamCards(), B: newTeamCards() }, teamPoints: { A: 0, B: 0 },
+    sitout: { A: null, B: null }, cardChoices: {}, chosen: null, turn: null, cardWindowEndsAt: null, gameOver: null } };
+}
+
+export function beginTeamTurn(room, team, now) {
+  return { ...room, status: 'turn', turn: { team, endsAt: now + TEAM_LIMITS.turn },
+    chosen: null, cardWindowEndsAt: null, startsAt: null, endsAt: null };
+}
+
+export function chooseSquare(room, playerId, squareId, steal, now) {
+  const player = room.players.get(playerId);
+  if (room.gameMode !== 'teams' || room.status !== 'turn' || !player?.connected ||
+      player.team !== room.turn?.team || now >= room.turn.endsAt) return { error: 'NOT_YOUR_TURN' };
+  // Choosing a Steal is the designated chooser's card action, not an ordinary square tap.
+  if (room.sitout?.[player.team] === playerId && !steal) return { error: 'SITTING_OUT' };
+  const square = Number.isInteger(squareId) ? room.board.find(entry => entry.id === squareId) : null;
+  if (!square || (steal !== undefined && typeof steal !== 'boolean')) return { error: 'BAD_TARGET' };
+  if (steal) {
+    if (square.owner !== otherTeam(player.team)) return { error: 'BAD_TARGET' };
+    if (!(room.cards[player.team].steal > 0)) return { error: 'NO_CARD' };
+    const error = cardPlayError(room, playerId, 'steal');
+    if (error) return { error };
+    if (room.sitout?.[player.team] && room.cardChoices?.[player.team]) return { error: 'NOT_ALLOWED' };
+  } else if (square.owner) return { error: 'TAKEN' };
+  return { room: selectTeamSquare(room, square, Boolean(steal), now),
+    ...(steal ? { by: { id: player.id, name: player.name } } : {}) };
+}
+
+function selectTeamSquare(room, square, steal, now) {
+  const team = room.turn.team;
+  return { ...room, status: 'cardWindow', category: square.category,
+    cardWindowEndsAt: now + TEAM_LIMITS.cards,
+    chosen: { squareId: square.id, team, steal, lockedBy: null },
+    cardChoices: steal ? { ...room.cardChoices, [team]: 'steal' } : room.cardChoices,
+    cards: steal ? { ...room.cards, [team]: { ...room.cards[team], steal: room.cards[team].steal - 1 } } : room.cards };
+}
+
+// A full board may still have a legal Steal turn. The timeout uses it only if no free square exists.
+export function automaticSquare(room, now, randomValue) {
+  let squares = room.board.filter(square => !square.owner);
+  const steal = !squares.length;
+  if (steal && room.cards[room.turn.team].steal > 0) {
+    squares = room.board.filter(square => square.owner === otherTeam(room.turn.team));
+  }
+  if (!squares.length) return null;
+  const square = squares[Math.min(Math.floor(randomValue * squares.length), squares.length - 1)];
+  return selectTeamSquare(room, square, steal, now);
+}
+
+export function boardPayload(room) {
+  return { board: room.board.map(({ id, category, owner }) => ({ id,
+    category: { id: category.id, title: category.title }, owner })),
+    teamPoints: { ...room.teamPoints }, cards: { A: { ...room.cards.A }, B: { ...room.cards.B } } };
+}
+
+export function teamScores(room) {
+  const scores = { A: 0, B: 0 };
+  for (const player of room.players.values()) if (player.team in scores) scores[player.team] += player.score;
+  return scores;
+}
+
+// Adapter around the classic matching engine keeps classic rules and Freeze unchanged.
+export function submitBoardAnswer(room, playerId, text, now) {
+  const player = room.players.get(playerId);
+  if (!player?.team || room.sitout?.[player.team] === playerId) {
+    return { room, word: null, ack: { result: 'closed', delta: 0, score: player?.score ?? 0 } };
+  }
+  return submitAnswer(room, playerId, text, now);
+}
+
+export function finishTeamBattle(room) {
+  const scores = teamScores(room);
+  const latest = team => {
+    const times = [...room.players.values()].filter(player => player.team === team && player.lastCorrectAt != null)
+      .map(player => player.lastCorrectAt);
+    return times.length ? Math.max(...times) : null;
+  };
+  let winnerTeam = scores.A > scores.B ? 'A' : scores.B > scores.A ? 'B' : null;
+  if (!winnerTeam) {
+    const a = latest('A'), b = latest('B');
+    if (a !== b) winnerTeam = a == null ? 'B' : b == null ? 'A' : a < b ? 'A' : 'B';
+  }
+  const board = room.board.map(square => square.id === room.chosen.squareId && winnerTeam ?
+    { ...square, owner: winnerTeam } : square);
+  return { room: { ...room, board, status: 'battleEnd', teamPoints: {
+    A: room.teamPoints.A + scores.A, B: room.teamPoints.B + scores.B } },
+    payload: { squareId: room.chosen.squareId, winnerTeam, teamScores: scores,
+      scores: [...room.players.values()].map(({ id, name, team, score }) => ({ id, name, team, score })) } };
+}
+
+export function restartTeamRoom(room) {
+  const next = restartRoom(room);
+  return { ...next, board: [], turn: null, chosen: null, cardWindowEndsAt: null, gameOver: null,
+    cards: { A: newTeamCards(), B: newTeamCards() }, teamPoints: { A: 0, B: 0 },
+    sitout: { A: null, B: null }, cardChoices: {} };
 }
 
 // Reef / PB-15. Board identity is square.id, not array order.
@@ -324,5 +457,12 @@ export function submitTeamAnswer(room, playerId, text, now) {
   if (room.gameMode === 'teams' && player && room.sitout?.[player.team] === playerId) {
     return { room, word: null, ack: { result: 'closed', delta: 0, score: player.score } };
   }
-  return submitAnswer(room, playerId, text, now);
+  return room.gameMode === 'teams' ? submitBoardAnswer(room, playerId, text, now) : submitAnswer(room, playerId, text, now);
+}
+
+// Reef / PB-20: enforce chooser finality around Danah's unchanged Freeze rule.
+export function playTeamFreeze(room, playerId, now, randomValue) {
+  const choice = recordTeamCardChoice(room, playerId, 'freeze');
+  if (choice.error) return { error: choice.error };
+  return playFreeze(choice.room, playerId, now, randomValue);
 }

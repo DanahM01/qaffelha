@@ -5,7 +5,7 @@ import { attachGameHandlers, createGameServer } from './index.js';
 import { prepareCategories } from './game.js';
 
 // Exercise the real event handlers with deterministic time and room delivery.
-function harness() {
+function harness(options = {}) {
   let time = 100000;
   let sequence = 0;
   const jobs = new Map();
@@ -24,6 +24,7 @@ function harness() {
     onCategoryUsed: async (...args) => used.push(args),
     schedule(callback, delay) { const id = ++sequence; jobs.set(id, { callback, at: time + delay }); return id; },
     cancel(id) { jobs.delete(id); },
+    ...options,
   });
   function connect() {
     const socket = new EventEmitter();
@@ -386,5 +387,258 @@ test('PB-16 freeze card over sockets: announce, freeze the top rival for 3 s, on
   assert.deepEqual(h.connect().request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_ALLOWED' });
   h.advance(3000);
   assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'correct');
+  h.dispose();
+});
+
+function teamHarness(options = {}) {
+  const h = harness({ categories: prepareCategories(Array.from({ length: 16 }, (_, id) => ({
+    _id: String(id), title: `فئة ${id}`, answers: ['موز', 'تفاح', 'برتقال'] }))), ...options });
+  function lobby(mode = 'screen', count = 4) {
+    const result = h.lobby(mode);
+    while (result.players.length < count) {
+      const player = h.connect();
+      player.request('room:join', { code: result.code, name: `لاعب ${result.players.length}` });
+      result.players.push(player);
+    }
+    // Manual assignments give the test stable identities independent of shuffle randomness.
+    for (const [index, player] of result.players.entries()) {
+      assert.equal(result.host.request('team:set', { code: result.code, playerId: player.data.playerId,
+        team: index % 2 === 0 ? 'A' : 'B' }).ok, true);
+    }
+    return result;
+  }
+  return { ...h, teamLobby: lobby };
+}
+
+for (const mode of ['screen', 'phone']) test(`PB-14 ${mode}: real team handlers synchronize all phases, scores, reconnect and restart`, () => {
+  const h = teamHarness();
+  const { host, code, players } = h.teamLobby(mode);
+  assert.equal(host.request('game:start', { code, gameMode: 'teams' }).ok, true);
+  const board = host.latest('board:update');
+  assert.equal(board.board.length, 16);
+  assert.equal(board.board.every(square => !('answers' in square.category) && !('mine' in square)), true);
+  assert.deepEqual(host.latest('turn:start'), { team: 'A', endsAt: 115000 });
+  assert.equal(host.request('game:start', { code, gameMode: 'teams' }).ok, true);
+  assert.equal(h.jobs.size, 1);
+  assert.equal(players[1].request('square:choose', { code, squareId: 0 }).error, 'NOT_YOUR_TURN');
+  assert.equal(players[0].request('square:choose', { code, squareId: 0 }).ok, true);
+  assert.equal(players[2].request('square:choose', { code, squareId: 1 }).error, 'NOT_YOUR_TURN');
+  assert.equal(host.latest('battle:chosen').cardWindowEndsAt, 105000);
+  const rejoined = h.connect();
+  const playerId = players[2].data.playerId;
+  const snapshot = rejoined.request('room:rejoin', { code, playerId }).state;
+  assert.equal(snapshot.status, 'cardWindow');
+  assert.equal(snapshot.cardWindowEndsAt, 105000);
+  assert.equal(snapshot.chosen.squareId, 0);
+  assert.equal(snapshot.me.team, 'A');
+  assert.equal(snapshot.board.length, 16);
+  assert.equal(players[2].request('square:choose', { code, squareId: 1 }).error, 'NOT_YOUR_TURN');
+  h.advance(4999);
+  assert.equal(host.latest('round:countdown'), undefined);
+  h.advance(1);
+  assert.equal(host.latest('round:countdown').startsAt, 108000);
+  h.advance(3000);
+  assert.equal(host.latest('round:start').endsAt, 128000);
+  assert.equal(host.latest('round:start').squareId, 0);
+  assert.equal(host.latest('round:start').lockedBy, null);
+  assert.equal(rejoined.request('answer:submit', { code, text: 'موز' }).delta, 1);
+  assert.deepEqual(host.latest('score:update').teamScores, { A: 1, B: 0 });
+  assert.equal(players[1].request('answer:submit', { code, text: 'موز' }).delta, -1);
+  assert.deepEqual(host.latest('score:update').teamScores, { A: 1, B: -1 });
+  h.advance(20000);
+  assert.equal(host.latest('round:end'), undefined);
+  assert.equal(host.latest('battle:end').winnerTeam, 'A');
+  assert.equal(host.latest('board:update').board[0].owner, 'A');
+  assert.deepEqual(host.latest('board:update').teamPoints, { A: 1, B: -1 });
+  assert.equal([...h.rooms.get(code).players.values()].some(player => player.out), false);
+  assert.equal(rejoined.request('answer:submit', { code, text: 'تفاح' }).result, 'closed');
+  h.advance(3999);
+  assert.equal(h.rooms.get(code).status, 'battleEnd');
+  h.advance(1);
+  assert.equal(host.latest('turn:start').team, 'B');
+  assert.equal(players[1].request('square:choose', { code, squareId: 1 }).ok, true);
+  h.advance(8000);
+  assert.deepEqual(host.latest('score:update').teamScores, { A: 0, B: 0 });
+  assert.equal(h.rooms.get(code).players.get(playerId).submitted.size, 0);
+  assert.equal(host.request('game:restart', { code }).ok, true);
+  assert.equal(h.rooms.get(code).status, 'lobby');
+  assert.equal(h.rooms.get(code).board.length, 0);
+  h.advance(60000);
+  assert.equal(h.rooms.get(code).status, 'lobby');
+  assert.equal(h.jobs.size, 0);
+  h.dispose();
+});
+
+test('PB-14 lobby handlers authorize host, preserve manual choices, balance latest joiners and validate startup', () => {
+  const h = teamHarness();
+  const { host, code, players } = h.lobby();
+  assert.equal(host.request('game:start', { code, gameMode: 'teams' }).error, 'NOT_ENOUGH_PLAYERS');
+  assert.equal(players[0].request('team:shuffle', { code }).error, 'NOT_HOST');
+  assert.equal(players[0].request('team:set', { code, playerId: players[0].data.playerId, team: 'A' }).error, 'NOT_HOST');
+  assert.equal(host.request('team:set', { code, playerId: 'missing', team: 'A' }).error, 'NOT_FOUND');
+  assert.equal(host.request('team:set', { code, playerId: players[0].data.playerId, team: {} }).error, 'NOT_FOUND');
+  assert.equal(host.request('team:shuffle', { code }).ok, true);
+  const extra = h.connect();
+  extra.request('room:join', { code, name: 'رابع' });
+  players.push(extra);
+  const counts = () => [...h.rooms.get(code).players.values()].filter(player => player.team === 'A').length;
+  assert.equal(counts(), 2);
+  for (const player of players) host.request('team:set', { code, playerId: player.data.playerId, team: 'A' });
+  assert.equal(counts(), 4);
+  assert.equal(host.request('game:start', { code, gameMode: 'teams' }).ok, true);
+  assert.equal(counts(), 2);
+  assert.equal(h.rooms.get(code).players.get(extra.data.playerId).team, 'B');
+  assert.equal(host.request('team:shuffle', { code }).error, 'STARTED');
+  assert.equal(host.request('team:set', { code, playerId: extra.data.playerId, team: 'A' }).error, 'STARTED');
+  h.dispose();
+  const insufficient = harness();
+  const lobby = insufficient.lobby();
+  insufficient.connect().request('room:join', { code: lobby.code, name: 'رابع' });
+  assert.equal(lobby.host.request('game:start', { code: lobby.code, gameMode: 'teams' }).error, 'NOT_ENOUGH_CATEGORIES');
+  assert.equal(insufficient.rooms.get(lobby.code).status, 'lobby');
+  insufficient.dispose();
+});
+
+test('PB-14 automatic turns survive disconnection, choose once after 15s and reset pending phases', () => {
+  for (const phase of ['turn', 'cardWindow', 'countdown']) {
+    const h = teamHarness();
+    const { host, code, players } = h.teamLobby();
+    host.request('game:start', { code, gameMode: 'teams' });
+    if (phase === 'turn') {
+      players[0].disconnect(); players[2].disconnect();
+      h.advance(14999);
+      assert.equal(host.latest('battle:chosen'), undefined);
+      h.advance(1);
+      assert.equal(host.latest('battle:chosen').squareId, 0);
+      assert.equal(host.latest('battle:chosen').cardWindowEndsAt, 120000);
+    } else {
+      players[0].request('square:choose', { code, squareId: 0 });
+      if (phase === 'countdown') h.advance(5000);
+    }
+    host.request('game:restart', { code });
+    h.advance(60000);
+    assert.equal(h.rooms.get(code).status, 'lobby');
+    assert.equal(host.latest('round:start'), undefined);
+    assert.equal(h.jobs.size, 0);
+    h.dispose();
+  }
+});
+
+for (const wins of [false, true]) test(`PB-19 sockets: steal consumes the card and ${wins ? 'captures' : 'retains'} the rival square`, () => {
+  const h = teamHarness();
+  const { host, code, players } = h.teamLobby();
+  host.request('game:start', { code, gameMode: 'teams' });
+  h.rooms.get(code).board[0].owner = 'B';
+  const outsider = h.connect();
+  assert.equal(outsider.request('square:choose', { code, squareId: 0, steal: true }).error, 'NOT_YOUR_TURN');
+  assert.equal(players[0].request('square:choose', { code, squareId: 1, steal: true }).error, 'BAD_TARGET');
+  assert.equal(players[0].request('square:choose', { code, squareId: 0 }).error, 'TAKEN');
+  assert.equal(players[0].request('square:choose', { code, squareId: 0, steal: true }).ok, true);
+  assert.deepEqual(host.latest('card:played'), { team: 'A', card: 'steal',
+    by: { id: players[0].data.playerId, name: 'لاعب 0' }, target: 0 });
+  assert.equal(host.latest('board:update').cards.A.steal, 0);
+  assert.equal(host.latest('battle:chosen').steal, true);
+  h.advance(8000);
+  players[wins ? 0 : 1].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(host.latest('board:update').board[0].owner, wins ? 'A' : 'B');
+  assert.equal(host.latest('board:update').cards.A.steal, 0);
+  h.dispose();
+});
+
+test('PB-14 integration point accepts PB-15 result immediately, retains it for rejoin and cancels further turns', () => {
+  const result = { winnerTeam: 'A', line: [0, 1, 2, 3], squares: { A: 4, B: 0 }, teamPoints: { A: 1, B: 0 } };
+  let checked = 0;
+  const h = teamHarness({ resolveTeamGame(room) {
+    checked++;
+    assert.equal(room.status, 'battleEnd');
+    assert.equal(room.board[0].owner, 'A');
+    return result;
+  } });
+  const { host, code, players } = h.teamLobby();
+  host.request('game:start', { code, gameMode: 'teams' });
+  players[0].request('square:choose', { code, squareId: 0 });
+  h.advance(8000);
+  players[0].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(checked, 1);
+  assert.deepEqual(host.latest('game:over'), result);
+  const refresh = h.connect().request('room:rejoin', { code, playerId: players[0].data.playerId });
+  assert.equal(refresh.state.status, 'over');
+  assert.equal(refresh.state.winnerTeam, 'A');
+  assert.deepEqual(refresh.state.line, result.line);
+  h.advance(60000);
+  assert.equal(h.rooms.get(code).status, 'over');
+  assert.equal(h.jobs.size, 0);
+  h.dispose();
+});
+
+test('PB-14 PB-20 adapter assigns only after settlement, before the next card window, never on countdown', () => {
+  let prepared = 0;
+  const h = teamHarness({ prepareNextTeamBattle(room) {
+    prepared++;
+    assert.equal(room.status, 'battleEnd');
+    assert.equal(room.board[0].owner, 'A');
+    return { ...room, sitout: { A: room.joinOrder[0], B: null }, cardChoices: {} };
+  } });
+  const { host, code, players } = h.teamLobby('screen', 6);
+  host.request('game:start', { code, gameMode: 'teams' });
+  players[0].request('square:choose', { code, squareId: 0 });
+  h.advance(8000);
+  assert.equal(prepared, 0);
+  players[0].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(prepared, 1);
+  assert.equal(host.latest('team:sitout').A, players[0].data.playerId);
+  h.advance(4000);
+  players[1].request('square:choose', { code, squareId: 1 });
+  h.advance(8000);
+  assert.equal(prepared, 1);
+  assert.equal(players[0].request('answer:submit', { code, text: 'موز' }).result, 'closed');
+  h.dispose();
+});
+
+test('PB-15 real team engine completes a line and restores the final result after refresh', () => {
+  const h = teamHarness();
+  const { host, code, players } = h.teamLobby();
+  host.request('game:start', { code, gameMode: 'teams' });
+  for (const square of h.rooms.get(code).board.slice(0, 3)) square.owner = 'A';
+  players[0].request('square:choose', { code, squareId: 3 });
+  h.advance(8000);
+  players[0].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(host.latest('game:over').winnerTeam, 'A');
+  assert.deepEqual(host.latest('game:over').line, [0, 1, 2, 3]);
+  const refresh = h.connect().request('room:rejoin', { code, playerId: players[0].data.playerId });
+  assert.equal(refresh.state.status, 'over');
+  assert.equal(refresh.state.winnerTeam, 'A');
+  h.advance(60000);
+  assert.equal(h.jobs.size, 0);
+  h.dispose();
+});
+
+test('PB-20 real engine rotates sitouts and enforces one fixed card choice across refresh', () => {
+  const h = teamHarness();
+  const { host, code, players } = h.teamLobby('screen', 6);
+  host.request('game:start', { code, gameMode: 'teams' });
+  const room = h.rooms.get(code);
+  room.sitout = { A: players[0].data.playerId, B: null };
+  room.board[0].owner = 'B';
+  assert.equal(players[2].request('square:choose', { code, squareId: 0, steal: true }).error, 'NOT_ALLOWED');
+  assert.equal(players[0].request('square:choose', { code, squareId: 0, steal: true }).ok, true);
+  const refreshed = h.connect();
+  const snapshot = refreshed.request('room:rejoin', { code, playerId: players[0].data.playerId }).state;
+  assert.equal(snapshot.cardChoices.A, 'steal');
+  assert.equal(snapshot.cardWindowEndsAt, 105000);
+  h.advance(8000);
+  assert.equal(refreshed.request('answer:submit', { code, text: 'موز' }).result, 'closed');
+  assert.equal(refreshed.request('card:play', { code, card: 'freeze' }).error, 'NOT_ALLOWED');
+  assert.equal(players[2].request('card:play', { code, card: 'freeze' }).error, 'NOT_ALLOWED');
+  assert.equal(h.rooms.get(code).cards.A.freeze, 1);
+  players[2].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(host.latest('team:sitout').A, players[4].data.playerId);
+  assert.equal(host.latest('team:sitout').B, players[5].data.playerId);
+  assert.deepEqual(h.rooms.get(code).cardChoices, {});
   h.dispose();
 });

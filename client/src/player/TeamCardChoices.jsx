@@ -22,7 +22,7 @@ export default function TeamCardChoices({
     state.endsAt ? state.endsAt - 3000 : 0,
     offset,
   );
-  const cardWindow = useServerSeconds(state.chosen?.cardWindowEndsAt, offset);
+  const cardWindow = useServerSeconds(state.cardWindowEndsAt ?? state.chosen?.cardWindowEndsAt, offset);
   const turnWindow = useServerSeconds(state.turn?.endsAt, offset);
   if (!team || !["turn", "cardWindow", "round"].includes(state.status))
     return null;

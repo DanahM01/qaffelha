@@ -14,7 +14,7 @@ export default function TeamBoardScreen({
   const team = myTeam(state, meId);
   const window = state.status === "cardWindow";
   const seconds = useServerSeconds(
-    window ? state.chosen?.cardWindowEndsAt : state.turn?.endsAt,
+    window ? (state.cardWindowEndsAt ?? state.chosen?.cardWindowEndsAt) : state.turn?.endsAt,
     offset,
   );
   const sittingOut = isSittingOut(state, meId);

@@ -105,3 +105,10 @@ test("announced card fixes the chooser decision until the next server turn", () 
     {},
   );
 });
+
+test("card deadlines from live events replace refreshed deadlines and clear on the next turn", () => {
+  const next = applyTeamEvent({ cardWindowEndsAt: 100 }, TEAM_EVENTS.chosen,
+    { squareId: 2, cardWindowEndsAt: 5000 });
+  assert.equal(next.cardWindowEndsAt, 5000);
+  assert.equal(applyTeamEvent(next, TEAM_EVENTS.turn, { team: 'B', endsAt: 9000 }).cardWindowEndsAt, null);
+});
