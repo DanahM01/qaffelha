@@ -5,9 +5,12 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { Server } from 'socket.io';
 import { MongoClient } from 'mongodb';
+import * as teamRules from './game.js';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, rejoinSnapshot, playFreeze } from './game.js';
+  playersPayload, scoresPayload, rejoinSnapshot, playFreeze,
+  TEAM_LIMITS, assignTeams, beginTeamGame, beginTeamTurn, chooseSquare, automaticSquare,
+  boardPayload, teamScores, submitBoardAnswer, finishTeamBattle, restartTeamRoom } from './game.js';
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -15,12 +18,16 @@ const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin:
   over: 'game:over', restart: 'game:restart',
   card: 'card:play', cardPlayed: 'card:played', frozen: 'player:frozen' });
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+const TEAM_EVENTS = Object.freeze({ set: 'team:set', shuffle: 'team:shuffle', board: 'board:update',
+  turn: 'turn:start', choose: 'square:choose', chosen: 'battle:chosen', end: 'battle:end', sitout: 'team:sitout' });
 const payloadObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const roomCode = (value) => typeof value === 'string' && /^[A-Za-z]{4}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
 
 export function attachGameHandlers(io, { categories, now = Date.now, schedule = setTimeout,
   cancel = clearTimeout, random = Math.random, log = console.log,
-  onCategoryUsed = async () => {} }) {
+  onCategoryUsed = async () => {},
+  resolveTeamGame = room => teamRules.teamGameResult?.(room.board, room.teamPoints, room.cards) ?? null,
+  prepareNextTeamBattle = room => teamRules.prepareTeamSitouts?.(room) ?? room }) {
   if (!categories.length) throw new Error('No categories available');
   const rooms = new Map();
   const timers = new Map();
@@ -129,6 +136,88 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
     });
   }
 
+  // PB-14: the team lifecycle uses its own phase timer and never enters classic elimination.
+  function publishBoard(room) { emit(room, TEAM_EVENTS.board, boardPayload(room)); }
+  function beginTurn(code, team) {
+    const room = beginTeamTurn(rooms.get(code), team, now());
+    rooms.set(code, room);
+    emit(room, TEAM_EVENTS.turn, room.turn);
+    later(code, 'phase', TEAM_LIMITS.turn, () => {
+      const current = rooms.get(code);
+      const chosen = automaticSquare(current, now(), random());
+      if (chosen) return announceSquare(chosen);
+      // PB-15 owns the terminal outcome. If only the rival can steal, give it the turn.
+      const rival = team === 'A' ? 'B' : 'A';
+      if (current.cards[rival].steal > 0 && current.board.some(square => square.owner === team)) return beginTurn(code, rival);
+      current.status = 'battleEnd';
+      log(`room ${code} awaiting PB-15 board result`);
+    });
+  }
+  function announceSquare(room, by = null) {
+    rooms.set(room.code, room);
+    stop(room.code, 'phase');
+    if (room.chosen.steal) {
+      const representative = room.players.get(room.sitout?.[room.chosen.team]) ??
+        [...room.players.values()].find(player => player.team === room.chosen.team);
+      emit(room, EVENTS.cardPlayed, { team: room.chosen.team, card: 'steal',
+        by: by ?? { id: representative.id, name: representative.name },
+        target: room.chosen.squareId });
+      publishBoard(room);
+    }
+    emit(room, TEAM_EVENTS.chosen, { squareId: room.chosen.squareId, team: room.chosen.team,
+      steal: room.chosen.steal, cardWindowEndsAt: room.cardWindowEndsAt });
+    later(room.code, 'phase', room.cardWindowEndsAt - now(), () => teamCountdown(room.code));
+  }
+  function teamCountdown(code) {
+    const room = rooms.get(code);
+    room.status = 'countdown';
+    room.round += 1;
+    room.startsAt = now() + LIMITS.countdown;
+    room.endsAt = null;
+    emit(room, EVENTS.countdown, { round: room.round, startsAt: room.startsAt });
+    later(code, 'phase', room.startsAt - now(), () => {
+      const running = startRound(rooms.get(code));
+      rooms.set(code, running);
+      const category = running.category;
+      const timestamp = now();
+      categories = categories.map(entry => entry.id === category.id ? { ...entry, lastUsedAt: timestamp } : entry);
+      Promise.resolve().then(() => onCategoryUsed(category.dbId, new Date(timestamp)))
+        .catch(() => log('category:lastUsedAt update failed'));
+      emit(running, EVENTS.round, { round: running.round, category: { id: category.id, title: category.title },
+        endsAt: running.endsAt, squareId: running.chosen.squareId, lockedBy: running.chosen.lockedBy });
+      emit(running, EVENTS.score, { ...scoresPayload(running), teamScores: teamScores(running) });
+      later(code, 'phase', running.endsAt - now(), () => endTeamBattle(code));
+    });
+  }
+  function endTeamBattle(code) {
+    const result = finishTeamBattle(rooms.get(code));
+    const room = result.room;
+    rooms.set(code, room);
+    emit(room, TEAM_EVENTS.end, result.payload);
+    publishBoard(room);
+    log(`room ${code} battle ${room.round} end`);
+    // PB-15 supplies the pure winning-line/full-board resolver; retain its result for PB-28.
+    const outcome = resolveTeamGame(room);
+    if (outcome) {
+      room.status = 'over';
+      room.gameOver = outcome;
+      emit(room, EVENTS.over, outcome);
+      return;
+    }
+    const next = prepareNextTeamBattle(room);
+    rooms.set(code, next);
+    emit(next, TEAM_EVENTS.sitout, { ...next.sitout });
+    later(code, 'phase', TEAM_LIMITS.results, () => beginTurn(code, room.chosen.team === 'A' ? 'B' : 'A'));
+  }
+  function shuffledPlayers(room) {
+    const players = room.joinOrder.map(id => ({ ...room.players.get(id), team: null }));
+    for (let i = players.length - 1; i > 0; i--) {
+      const j = Math.min(i, Math.floor(random() * (i + 1)));
+      [players[i], players[j]] = [players[j], players[i]];
+    }
+    return assignTeams(players);
+  }
+
   io.on('connection', (socket) => {
     // Missing acknowledgements and malformed payloads never throw into Socket.IO.
     function handle(event, callback) {
@@ -156,6 +245,11 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       const error = joinError(room, input.name);
       if (error) return ack({ ok: false, error });
       const player = createPlayer(randomUUID(), input.name.trim(), socket.id, now());
+      if (room.gameMode === 'teams') {
+        const counts = { A: 0, B: 0 };
+        for (const entry of room.players.values()) if (entry.team in counts) counts[entry.team]++;
+        player.team = counts.A <= counts.B ? 'A' : 'B';
+      }
       // Leave an old identity before adding the new identity to the destination room.
       if (socket.data.code) detach(socket);
       room.players.set(player.id, player);
@@ -179,7 +273,22 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       if (!isHost(socket, room)) return ack({ ok: false, error: 'NOT_HOST' });
       // Duplicate start requests are idempotent and cannot create extra timers.
       if (room.status !== 'lobby') return ack({ ok: true });
+      if (input.gameMode === 'teams') {
+        const source = [...room.players.values()].some(player => player.team === 'A' || player.team === 'B') ?
+          room : { ...room, players: shuffledPlayers(room) };
+        const result = beginTeamGame(source, categories, Array.from({ length: TEAM_LIMITS.squares }, () => random()));
+        if (result.error) return ack({ ok: false, error: result.error });
+        rooms.set(room.code, result.room);
+        ack({ ok: true });
+        publishPlayers(result.room);
+        publishBoard(result.room);
+        emit(result.room, TEAM_EVENTS.sitout, { ...result.room.sitout });
+        beginTurn(room.code, 'A');
+        log(`room ${room.code} teams start`);
+        return;
+      }
       if (!canStart(room)) return ack({ ok: false, error: 'NOT_ENOUGH_PLAYERS' });
+      room.gameMode = 'classic';
       ack({ ok: true });
       log(`room ${room.code} start`);
       countdown(room.code);
@@ -190,11 +299,46 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       if (!room || socket.data.code !== room.code || player?.socketId !== socket.id) {
         return ack({ result: 'closed', delta: 0, score: 0 });
       }
-      const result = submitAnswer(room, player.id, input.text, now());
+      const result = room.gameMode === 'teams' ? (teamRules.submitTeamAnswer ?? submitBoardAnswer)(room, player.id, input.text, now()) :
+        submitAnswer(room, player.id, input.text, now());
       rooms.set(room.code, result.room);
       ack(result.ack);
       if (result.word) emit(result.room, EVENTS.locked, { word: result.word, by: { id: player.id, name: player.name } });
-      if (result.ack.delta) emit(result.room, EVENTS.score, scoresPayload(result.room));
+      if (result.ack.delta) emit(result.room, EVENTS.score, { ...scoresPayload(result.room),
+        ...(room.gameMode === 'teams' ? { teamScores: teamScores(result.room) } : {}) });
+    });
+    handle(TEAM_EVENTS.set, (input, ack) => {
+      const room = rooms.get(roomCode(input.code));
+      if (!isHost(socket, room)) return ack({ ok: false, error: 'NOT_HOST' });
+      if (room.status !== 'lobby') return ack({ ok: false, error: 'STARTED' });
+      const player = room.players.get(input.playerId);
+      if (!player || !['A', 'B'].includes(input.team)) return ack({ ok: false, error: 'NOT_FOUND' });
+      room.gameMode = 'teams';
+      const assigned = assignTeams(room.joinOrder.map(id => room.players.get(id)), room.players, false);
+      assigned.set(player.id, { ...assigned.get(player.id), team: input.team });
+      room.players = assigned;
+      ack({ ok: true });
+      publishPlayers(room);
+    });
+    handle(TEAM_EVENTS.shuffle, (input, ack) => {
+      const room = rooms.get(roomCode(input.code));
+      if (!isHost(socket, room)) return ack({ ok: false, error: 'NOT_HOST' });
+      if (room.status !== 'lobby') return ack({ ok: false, error: 'STARTED' });
+      room.gameMode = 'teams';
+      room.players = shuffledPlayers(room);
+      ack({ ok: true });
+      publishPlayers(room);
+    });
+    handle(TEAM_EVENTS.choose, (input, ack) => {
+      const room = rooms.get(roomCode(input.code));
+      const player = room?.players.get(socket.data.playerId);
+      if (!room || socket.data.code !== room.code || player?.socketId !== socket.id) {
+        return ack({ ok: false, error: 'NOT_YOUR_TURN' });
+      }
+      const result = chooseSquare(room, player.id, input.squareId, input.steal, now());
+      if (result.error) return ack({ ok: false, error: result.error });
+      ack({ ok: true });
+      announceSquare(result.room, result.by);
     });
     handle(EVENTS.card, (input, ack) => {
       const room = rooms.get(roomCode(input.code));
@@ -219,7 +363,7 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       const room = rooms.get(roomCode(input.code));
       if (!isHost(socket, room)) return ack({ ok: false, error: 'NOT_HOST' });
       stop(room.code, 'phase');
-      const next = restartRoom(room);
+      const next = room.gameMode === 'teams' ? restartTeamRoom(room) : restartRoom(room);
       rooms.set(room.code, next);
       ack({ ok: true });
       publishPlayers(next);

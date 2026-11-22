@@ -97,7 +97,7 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
 ### 6.1 Changes to existing events
 | Event | Change |
 |---|---|
-| `game:start` | Payload `{ code, gameMode: 'classic' \| 'teams' }` (default `classic`; not `mode`, which is `screen`/`phone`). Teams: error `NOT_ENOUGH_PLAYERS` if < 4 players or < 2 per team |
+| `game:start` | Payload `{ code, gameMode: 'classic' \| 'teams' }` (default `classic`; not `mode`, which is `screen`/`phone`). Teams: error `NOT_ENOUGH_PLAYERS` if < 4 players; fill missing assignments and rebalance latest joiners before starting. Error `NOT_ENOUGH_CATEGORIES` if fewer than 16 distinct categories are available; stay in lobby |
 | `room:players` | Also `gameMode`, and each player has `team: 'A' \| 'B' \| null`. Both modes include `status` so a return to `lobby` is explicit, not inferred from elimination flags |
 | `round:start` | In teams mode also `{ squareId, lockedBy: 'A' \| 'B' \| null }` |
 | `answer:submit` | Extra results: `frozen` (0, you are frozen), `closed` also when you sit out. Lock bonus: `delta` is `+2` for the locking team |
@@ -108,11 +108,11 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
 | Event | Dir | Sent by | Payload → ack | Meaning |
 |---|---|---|---|---|
 | `team:set` | C→S | host | `{ code, playerId, team }` → `{ ok }` or `{ ok: false, error }` | Lobby only. Move a player. Errors `NOT_HOST`, `STARTED`, `NOT_FOUND` |
-| `team:shuffle` | C→S | host | `{ code }` → `{ ok }` | Lobby only. Random balanced split. Server then sends `room:players` |
+| `team:shuffle` | C→S | host | `{ code }` → `{ ok }` or `{ ok: false, error }` | Lobby only. Errors `NOT_HOST`, `STARTED`. Random balanced split. Server then sends `room:players` |
 | `board:update` | S→C | server | `{ board: [{ id, category: { id, title }, owner }], teamPoints: { A, B }, cards: { A: {freeze,lock,mine,steal}, B: {…} } }` | Full board after start and after every change. Mines are **not** in this payload |
 | `board:mines` | S→C | server (to one team only) | `{ mines: [squareId] }` | Your team's hidden mines. Sent only to sockets of that team |
 | `turn:start` | S→C | server | `{ team, endsAt }` | Turn team chooses a square before `endsAt` (15 s) or the server picks |
-| `square:choose` | C→S | player | `{ code, squareId, steal? }` → `{ ok }` or `{ ok: false, error }` | Errors `NOT_YOUR_TURN`, `TAKEN`, `NO_CARD` (steal), `BAD_TARGET`, `SITTING_OUT` |
+| `square:choose` | C→S | player | `{ code, squareId, steal? }` → `{ ok }` or `{ ok: false, error }` | Errors `NOT_YOUR_TURN`, `TAKEN`, `NO_CARD` (steal), `BAD_TARGET`, `SITTING_OUT`, `NOT_ALLOWED` (Steal card chooser permission/finality) |
 | `battle:chosen` | S→C | server | `{ squareId, team, steal, cardWindowEndsAt }` | Square chosen; 5 s card window, then `round:countdown` |
 | `card:play` | C→S | player | `{ code, card: 'freeze' \| 'lock' \| 'mine' \| 'steal', target? }` → `{ ok }` or `{ ok: false, error }` | Errors `NO_CARD`, `NOT_NOW`, `NOT_ALLOWED`, `BAD_TARGET`. `steal` is played through `square:choose` |
 | `card:played` | S→C | server | `{ team, card, by: { id, name }, target? }` | Announce a card. For `mine`, sent **without** `target` to the other team |
@@ -144,6 +144,44 @@ PB-28 snapshot integration: the team engine provides `board`, `turn`, `chosen`, 
 deadline as `room.cardWindowEndsAt` (or `room.chosen.cardWindowEndsAt`). Retain the
 team `game:over` payload as `room.gameOver`; when the status is `over`, rejoin also
 returns `winnerTeam`, `line` and `squares` from that result. No game rules run on rejoin.
+
+PB-14/PB-19 engine integration:
+- `game:start` in teams mode builds the board and starts A's 15-second turn. A valid
+  choice cancels that deadline, opens a 5-second card window, then starts the usual
+  3-second countdown and 20-second battle. The next turn follows the battle result
+  after 4 seconds. There is no classic elimination or `round:end` in teams mode.
+- `square:choose` uses integer IDs 0–15. `steal: true` requires a rival-owned square
+  and consumes the choosing team's Steal immediately, even on a loss or a draw.
+  Its `card:played.target` is the square ID. The existing card permission rule applies;
+  a non-sitting-out teammate cannot spend the card when the team has a sitting-out player
+  (`NOT_ALLOWED`). The designated chooser may use Steal as a card action, while ordinary
+  square taps still receive `SITTING_OUT`. A successful Steal records `cardChoices[team]`;
+  failed choices consume nothing. This follows the proposed PB-20 integration in PR #13.
+- Timeout chooses a random free square. If the board is full, it uses Steal on a
+  random rival square if available; otherwise passes to the rival if only it can
+  steal. An automatic Steal announcement attributes `by` to the team's sitting-out
+  player, or its earliest-joined player. These full-board timeout choices and an exact
+  last-correct timestamp tie leaving ownership unchanged need Product Owner confirmation.
+- PB-15 (Reef, draft PR #13): the default resolver calls `teamGameResult(board, teamPoints,
+  cards)` when that export exists. It can also be supplied as `resolveTeamGame(room)`
+  to `createGameServer` or `attachGameHandlers`. It runs after capture and cumulative point updates. Return
+  the teams `game:over` payload from §6.1, or `null` to continue. The engine immediately
+  broadcasts and retains a returned result for rejoin. This PR does not implement
+  `findWinningLine` or full-board scoring. Without the PB-15 resolver the server
+  cannot declare a team winner; when neither team can choose, it stays at `battleEnd`.
+- PB-20 (Reef, draft PR #13): the default `prepareNextTeamBattle(room)` adapter calls
+  `prepareTeamSitouts(room)` when exported. It runs once after each continuing battle,
+  before the 4-second result delay. The engine broadcasts `team:sitout` then (also at
+  initial start), never reassigns during countdown, and uses Reef's `submitTeamAnswer`
+  when available, with `submitBoardAnswer` as the current fallback. This avoids adding
+  duplicate named exports when the PRs are later integrated by the team. PB-28 (Leena)
+  still needs `cardChoices` in rejoin snapshots once PB-20 is enabled.
+- PB-17 (Leena) and PB-18 (Renad): add their own card handlers and scoring effects.
+  The selected battle is in `room.chosen`, with the existing `lockedBy` field; hidden
+  mines must stay out of `board:update`. Neither card is implemented by PB-14/PB-19.
+- Renad/Reef: connect `board:update`, `turn:start`, `battle:chosen`, `battle:end` and
+  `square:choose` in the owned host/phone screens, including Steal selection and notices.
+  The server implementation does not change those UI files.
 
 ### 6.4 Who listens to what (teams mode)
 | Event | Big screen | Phone |
