@@ -22,6 +22,9 @@ const SCORE_UPDATE = 'score:update';
 const ROUND_END = 'round:end';
 const GAME_OVER = 'game:over';
 const GAME_RESTART = 'game:restart';
+// Team Mode, EVENTS.md §6.2.
+const TEAM_SET = 'team:set';
+const TEAM_SHUFFLE = 'team:shuffle';
 // Team Mode cards (EVENTS.md §6). Freeze: PB-16 (Danah).
 const CARD_PLAYED = 'card:played';
 const PLAYER_FROZEN = 'player:frozen';
@@ -45,6 +48,27 @@ function writeSaved(value) {
     else sessionStorage.removeItem(STORE_KEY);
   } catch {
     // Storage blocked (private mode): the room still works, it just can't survive a refresh.
+  }
+}
+
+// The lobby mode only lives on this screen until Start, so it is kept per room in this tab:
+// a refresh keeps «فرق», a new room starts on «فردي».
+const MODE_KEY = 'qaffelha.gameMode';
+
+function readMode(code) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(MODE_KEY));
+    return saved?.code === code && saved.gameMode === 'teams' ? 'teams' : 'classic';
+  } catch {
+    return 'classic';
+  }
+}
+
+function writeMode(code, gameMode) {
+  try {
+    sessionStorage.setItem(MODE_KEY, JSON.stringify({ code, gameMode }));
+  } catch {
+    // Storage blocked: the choice just resets on refresh.
   }
 }
 
@@ -99,6 +123,11 @@ export default function HostApp() {
   const [gameOver, setGameOver] = useState(null); // game:over payload
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState(false);
+  // The lobby choice «فردي» / «فرق». No event sets it before Start, so the host keeps it
+  // (readMode / writeMode) and sends it with game:start (EVENTS.md §6.1).
+  const [gameMode, setGameMode] = useState('classic');
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamError, setTeamError] = useState(false);
   const [cardNotice, setCardNotice] = useState(null); // last card:played, shown for 3 s
   const [frozenIds, setFrozenIds] = useState([]); // players frozen right now (player:frozen)
   const timers = useRef(new Set());
@@ -202,6 +231,7 @@ export default function HostApp() {
         if (room.notFound) return navigate('/', { replace: true });
         clockOffset.current = room.serverTime - Date.now();
         setCode(room.code);
+        setGameMode(readMode(room.code));
         setPlayers(room.players);
         if (room.roundInfo) {
           setLocked(room.roundInfo.locked);
@@ -235,7 +265,7 @@ export default function HostApp() {
     setStarting(true);
     setStartError(null);
     try {
-      const res = fake ? fakeRoom.current.gameStart() : await request(GAME_START, { code });
+      const res = fake ? fakeRoom.current.gameStart(gameMode) : await request(GAME_START, { code, gameMode });
       if (res.ok) return;
       setStartError(res.error === 'NOT_ENOUGH_PLAYERS' ? 'NOT_ENOUGH_PLAYERS' : 'FAILED');
     } catch {
@@ -243,6 +273,33 @@ export default function HostApp() {
     }
     setStarting(false);
   };
+
+  const changeMode = (mode) => {
+    setGameMode(mode);
+    if (!fake) writeMode(code, mode);
+    setStartError(null);
+    setTeamError(false);
+  };
+
+  // team:set / team:shuffle (EVENTS.md §6.2). The columns change when room:players comes back.
+  const teamRequest = async (send) => {
+    if (teamBusy) return;
+    setTeamBusy(true);
+    setTeamError(false);
+    try {
+      const res = await send();
+      if (!res.ok) setTeamError(true);
+    } catch {
+      setTeamError(true);
+    }
+    setTeamBusy(false);
+  };
+  const moveTeam = (playerId, team) => teamRequest(() => (
+    fake ? fakeRoom.current.setTeam(playerId, team) : request(TEAM_SET, { code, playerId, team })
+  ));
+  const shuffleTeams = () => teamRequest(() => (
+    fake ? fakeRoom.current.shuffleTeams() : request(TEAM_SHUFFLE, { code })
+  ));
 
   // «العب مرة ثانية»: same code and players, back to the lobby (EVENTS.md game:restart).
   const playAgain = async () => {
@@ -277,7 +334,21 @@ export default function HostApp() {
 
   return (
     <div className="q-app">
-      {status === 'lobby' && <HostLobby code={code} players={players} onStart={startGame} starting={starting} startError={startError} />}
+      {status === 'lobby' && (
+        <HostLobby
+          code={code}
+          players={players}
+          onStart={startGame}
+          starting={starting}
+          startError={startError}
+          gameMode={gameMode}
+          onModeChange={changeMode}
+          onMoveTeam={moveTeam}
+          onShuffle={shuffleTeams}
+          teamBusy={teamBusy}
+          teamError={teamError}
+        />
+      )}
       {status === 'countdown' && <Countdown round={countdown.round} startsAt={countdown.startsAt} clockOffset={clockOffset.current} />}
       {status === 'round' && (
         <RoundScreen
