@@ -298,3 +298,35 @@ test('real Socket.IO polling transport delivers acknowledgements, room broadcast
   assert.equal(rejoined.state.me.id, joined.playerId);
   assert.equal(rejoined.state.status, 'lobby');
 });
+
+test('PB-16 freeze card over sockets: announce, freeze the top rival for 3 s, one per team, classic refuses', () => {
+  const h = harness();
+  const { host, code, players } = h.lobby('screen');
+  const extra = h.connect();
+  extra.identity = extra.request('room:join', { code, name: 'لاعب 3' });
+  players.push(extra);
+  assert.deepEqual(players[0].request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_NOW' });
+  host.request('game:start', { code });
+  h.advance(3000);
+  // Team Mode setup normally comes from PB-13/PB-14; set it directly here.
+  const room = h.rooms.get(code);
+  const teamOf = new Map(players.map((socket, i) => [socket.identity.playerId, i < 2 ? 'A' : 'B']));
+  h.rooms.set(code, { ...room, gameMode: 'teams', sitout: { A: null, B: null },
+    cards: { A: { freeze: 1, lock: 1, mine: 1, steal: 1 }, B: { freeze: 1, lock: 1, mine: 1, steal: 1 } },
+    players: new Map([...room.players].map(([id, p]) => [id, { ...p, team: teamOf.get(id) }])) });
+  assert.equal(players[3].request('answer:submit', { code, text: 'موز' }).result, 'correct');
+  assert.deepEqual(players[0].request('card:play', { code, card: 'freeze' }), { ok: true });
+  const target = { id: players[3].identity.playerId, name: 'لاعب 3' };
+  assert.deepEqual(host.latest('card:played'), { team: 'A', card: 'freeze',
+    by: { id: players[0].identity.playerId, name: 'لاعب 0' }, target });
+  const frozen = players[3].latest('player:frozen');
+  assert.equal(frozen.id, target.id);
+  assert.equal(frozen.until - 103000 >= 3000, true);
+  assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'frozen');
+  assert.deepEqual(players[1].request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NO_CARD' });
+  assert.deepEqual(players[1].request('card:play', { code, card: 'lock' }), { ok: false, error: 'NO_CARD' });
+  assert.deepEqual(h.connect().request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_ALLOWED' });
+  h.advance(3000);
+  assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'correct');
+  h.dispose();
+});

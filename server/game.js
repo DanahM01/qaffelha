@@ -13,7 +13,7 @@ export function validateName(name, players = []) {
 
 export function createPlayer(id, name, socketId, joinedAt) {
   return { id, name, socketId, joinedAt, connected: true, out: false, score: 0,
-    submitted: new Set(), lastCorrectAt: null, submissionTimes: [] };
+    submitted: new Set(), lastCorrectAt: null, submissionTimes: [], frozenUntil: null };
 }
 
 export function createRoom(code, mode, hostToken, player = null) {
@@ -61,7 +61,7 @@ export function selectCategory(categories, used, randomValue) {
 export function startRound(room) {
   return { ...room, status: 'round', endsAt: room.startsAt + LIMITS.round, locked: new Map(),
     players: new Map([...room.players].map(([id, player]) => [id, { ...player, score: 0,
-      submitted: new Set(), lastCorrectAt: null, submissionTimes: [] }])) };
+      submitted: new Set(), lastCorrectAt: null, submissionTimes: [], frozenUntil: null }])) };
 }
 
 export function submitAnswer(room, playerId, text, now) {
@@ -71,6 +71,7 @@ export function submitAnswer(room, playerId, text, now) {
   const n = typeof text === 'string' && text.length <= 1000 ? normalize(text) : '';
   if (!n || [...n].length > 40) return response('wrong');
   if (!player || player.out || room.status !== 'round' || now >= room.endsAt) return response('closed');
+  if (player.frozenUntil != null && now < player.frozenUntil) return response('frozen');
   const updated = { ...player, submitted: new Set(player.submitted),
     submissionTimes: player.submissionTimes.filter((time) => time > now - 1000) };
   const nextRoom = { ...room, players: new Map(room.players), locked: new Map(room.locked) };
@@ -122,7 +123,7 @@ export function restartRoom(room) {
   return { ...room, status: 'lobby', round: 0, category: null, startsAt: null, endsAt: null,
     locked: new Map(), usedCategoryIds: new Set(), eliminatedOrder: [],
     players: new Map(players.map((player) => [player.id, { ...player, out: false, score: 0,
-      submitted: new Set(), lastCorrectAt: null, submissionTimes: [] }])),
+      submitted: new Set(), lastCorrectAt: null, submissionTimes: [], frozenUntil: null }])),
     joinOrder: room.joinOrder.filter((id) => players.some((player) => player.id === id)) };
 }
 
@@ -142,5 +143,55 @@ export function stateSnapshot(room, playerId) {
     startsAt: room.startsAt, endsAt: room.endsAt, ...scoresPayload(room),
     locked: [...room.locked.values()].map(({ word, byId }) => ({ word,
       by: { id: byId, name: room.players.get(byId).name } })),
-    me: player ? { id: player.id, out: player.out, score: player.score } : null };
+    me: player ? { id: player.id, out: player.out, score: player.score,
+      ...(room.gameMode === 'teams' ? { frozenUntil: player.frozenUntil ?? null } : {}) } : null };
+}
+
+// ---- Team Mode cards (SPEC §17.6). Owner of the Freeze card: Danah (PB-16). ----
+// Room fields used here come from Team Mode (PB-13/PB-14): room.gameMode, player.team,
+// room.cards = { A: { freeze, lock, mine, steal }, B: {…} }, room.sitout = { A: id|null, B: id|null }.
+
+export const FREEZE_MS = 3000;
+
+export function newTeamCards() {
+  return { freeze: 1, lock: 1, mine: 1, steal: 1 };
+}
+
+// Who may play one of their team's cards right now (SPEC §17.6 + §17.7). Returns an error code or null.
+export function cardPlayError(room, playerId, card) {
+  if (room.gameMode !== 'teams') return 'NOT_NOW';
+  const player = room.players.get(playerId);
+  if (!player?.team) return 'NOT_ALLOWED';
+  const sittingOut = room.sitout?.[player.team] ?? null;
+  if (sittingOut && sittingOut !== playerId) return 'NOT_ALLOWED';
+  if (!(room.cards?.[player.team]?.[card] > 0)) return 'NO_CARD';
+  return null;
+}
+
+// The opposing player with the highest score in this battle (tie → random). Sitting-out players are skipped.
+export function freezeTarget(room, team, randomValue) {
+  const sittingOut = new Set(Object.values(room.sitout ?? {}).filter(Boolean));
+  const rivals = [...room.players.values()].filter((player) =>
+    player.team && player.team !== team && !player.out && !sittingOut.has(player.id));
+  if (!rivals.length) return null;
+  const top = Math.max(...rivals.map((player) => player.score));
+  const best = rivals.filter((player) => player.score === top);
+  return best[Math.min(Math.floor(randomValue * best.length), best.length - 1)];
+}
+
+// Freeze: during a battle, block the top rival's answers for 3 s. One card per team per game.
+export function playFreeze(room, playerId, now, randomValue) {
+  const error = cardPlayError(room, playerId, 'freeze');
+  if (error) return { error };
+  if (room.status !== 'round' || room.endsAt == null || now >= room.endsAt - FREEZE_MS) return { error: 'NOT_NOW' };
+  const player = room.players.get(playerId);
+  const target = freezeTarget(room, player.team, randomValue);
+  if (!target) return { error: 'BAD_TARGET' };
+  const until = now + FREEZE_MS;
+  const players = new Map(room.players);
+  players.set(target.id, { ...target, frozenUntil: until });
+  const teamCards = room.cards[player.team];
+  const cards = { ...room.cards, [player.team]: { ...teamCards, freeze: teamCards.freeze - 1 } };
+  return { room: { ...room, players, cards }, team: player.team, until,
+    by: { id: player.id, name: player.name }, target: { id: target.id, name: target.name } };
 }
