@@ -1,10 +1,10 @@
 // Owner: Reef. Only sends documented intents; game decisions belong to the server.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { socket } from "../socket.js";
+import { createSessionRecovery } from "../sessionRecovery.js";
 
 const CREATE = "room:create";
 const JOIN = "room:join";
-const REJOIN = "room:rejoin";
 const PLAYERS = "room:players";
 const START = "game:start";
 const COUNTDOWN = "round:countdown";
@@ -39,6 +39,7 @@ function storedIdentity() {
     return value &&
       /^[A-HJ-NP-Z]{4}$/.test(value.code) &&
       typeof value.playerId === "string"
+      && value.playerId.length > 0
       ? value
       : null;
   } catch {
@@ -60,7 +61,6 @@ export default function usePlayerSession(navigate) {
   const offset = useRef(0);
   const mounted = useRef(false);
   const pending = useRef(false);
-  const generation = useRef(0);
   const reconnectAction = useRef(null);
   const clearError = useCallback(() => setError(""), []);
   const request = useCallback(
@@ -77,59 +77,48 @@ export default function usePlayerSession(navigate) {
 
   useEffect(() => {
     mounted.current = true;
-    const epoch = ++generation.current;
-    let reconnectRequest = 0;
-    async function reconnect() {
-      setConnected(true);
-      if (!identityRef.current) return;
-      const attempt = ++reconnectRequest;
-      setReconnecting(true);
-      const response = await request(REJOIN, identityRef.current);
-      if (
-        !mounted.current ||
-        epoch !== generation.current ||
-        attempt !== reconnectRequest
-      )
-        return;
-      setReconnecting(false);
-      if (!response) {
-        setReconnecting(true);
-        setError("ما قدرنا نرجعك للغرفة. حاول مرة ثانية.");
-        return;
-      }
-      if (!response.ok) {
-        if (response.error === "NOT_FOUND") {
-          try {
-            sessionStorage.removeItem("qaffelha");
-          } catch {
-            /* Storage may be unavailable. */
-          }
-          identityRef.current = null;
-          setIdentity(null);
-          setState(EMPTY);
-          navigate("/", { replace: true });
-        } else setError(ERRORS[response.error] || "ما قدرنا نرجعك للغرفة");
-        return;
-      }
-      offset.current = response.serverTime - Date.now();
-      roundRef.current =
-        response.state.status === "round" ? response.state.endsAt : null;
-      setState({
-        ...response.state,
-        frozenUntil: response.state.me?.frozenUntil ?? null,
-      });
-      setError("");
-    }
+    const recovery = createSessionRecovery({
+      socket,
+      getIdentity: () => identityRef.current,
+      onConnected: setConnected,
+      onPending: setReconnecting,
+      onError: setError,
+      onMissing: () => {
+        try {
+          sessionStorage.removeItem("qaffelha");
+        } catch {
+          /* Storage may be unavailable. */
+        }
+        identityRef.current = null;
+        setIdentity(null);
+        setState(EMPTY);
+        setFeedback(null);
+        navigate("/", { replace: true });
+      },
+      onSnapshot: (snapshot, serverTime) => {
+        offset.current = serverTime - Date.now();
+        roundRef.current =
+          snapshot.status === "round" ? snapshot.endsAt : null;
+        setFeedback(null);
+        setCardNotice(null);
+        setState({
+          ...snapshot,
+          frozenUntil:
+            snapshot.me?.frozenUntil ?? snapshot.frozenUntil ?? null,
+        });
+      },
+    });
+    const reconnect = recovery.recover;
     const disconnect = () => {
-      ++reconnectRequest;
       roundRef.current = null;
-      setConnected(false);
-      setReconnecting(Boolean(identityRef.current));
+      setFeedback(null);
+      recovery.disconnect();
     };
     const players = (payload) =>
       setState((current) =>
-        current.status === "over" &&
-        payload.players.every((player) => !player.out)
+        (payload.status === "lobby" && current.status !== "lobby") ||
+        (payload.status == null && current.gameMode !== "teams" && current.status === "over" &&
+          payload.players.every((player) => !player.out))
           ? { ...EMPTY, ...payload, scores: [], locked: [], me: null }
           : { ...current, ...payload },
       );
@@ -166,7 +155,7 @@ export default function usePlayerSession(navigate) {
           : current,
       );
     const scores = (payload) =>
-      setState((current) => ({ ...current, scores: payload.scores }));
+      setState((current) => ({ ...current, ...payload }));
     const roundEnd = (payload) => {
       roundRef.current = null;
       setFeedback(null);
@@ -229,7 +218,7 @@ export default function usePlayerSession(navigate) {
     if (socket.connected) reconnect();
     return () => {
       mounted.current = false;
-      ++generation.current;
+      recovery.dispose();
       reconnectAction.current = null;
       socket.off("connect", reconnect);
       socket.off("disconnect", disconnect);

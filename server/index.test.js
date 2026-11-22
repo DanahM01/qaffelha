@@ -171,6 +171,64 @@ test('player rejoin restores state and revokes the replaced socket', () => {
   h.dispose();
 });
 
+for (const status of ['lobby', 'countdown', 'round', 'roundEnd', 'over']) {
+  for (const mode of ['screen', 'phone']) test(`PB-28: ${mode} player refresh restores ${status} without creating an identity`, () => {
+    const h = harness();
+    try {
+      const { host, code, players } = h.lobby(mode);
+      const old = players[0];
+      const playerId = old.data.playerId;
+      const room = h.rooms.get(code);
+      const name = room.players.get(playerId).name;
+      if (status !== 'lobby') host.request('game:start', { code });
+      if (['round', 'roundEnd', 'over'].includes(status)) {
+        h.advance(3000);
+        old.request('answer:submit', { code, text: 'موز' });
+      }
+      if (status === 'roundEnd') h.advance(20000);
+      if (status === 'over') h.advance(53000);
+      const before = h.rooms.get(code);
+      const score = before.players.get(playerId).score;
+      const endsAt = before.endsAt;
+      old.disconnect();
+      const fresh = h.connect();
+      const ack = fresh.request('room:rejoin', { code, playerId });
+      assert.equal(ack.ok, true);
+      assert.equal(ack.state.status, status);
+      assert.equal(ack.state.me.id, playerId);
+      assert.equal(ack.state.me.score, score);
+      assert.equal(ack.state.players.find(player => player.id === playerId).name, name);
+      assert.equal(ack.state.players.length, 3);
+      assert.equal(h.rooms.get(code).players.size, 3);
+      assert.equal(ack.state.endsAt, endsAt);
+      if (status === 'roundEnd') assert.deepEqual(ack.state.eliminated, host.latest('round:end').eliminated);
+      if (status === 'over') {
+        assert.deepEqual(ack.state.winner, host.latest('game:over').winner);
+        assert.deepEqual(ack.state.ranking, host.latest('game:over').ranking);
+      }
+    } finally { h.dispose(); }
+  });
+}
+
+test('PB-28: eliminated refresh stays out and repeated refreshes preserve the same slot', () => {
+  const h = harness();
+  try {
+    const { host, code } = h.lobby();
+    host.request('game:start', { code });
+    h.advance(23000);
+    const { id } = host.latest('round:end').eliminated;
+    for (let i = 0; i < 3; i++) {
+      const fresh = h.connect();
+      const ack = fresh.request('room:rejoin', { code, playerId: id });
+      assert.equal(ack.state.me.out, true);
+      assert.equal(ack.state.eliminated.id, id);
+      assert.equal(ack.state.players.length, 3);
+      assert.equal(fresh.request('answer:submit', { code, text: 'موز' }).result, 'closed');
+      fresh.disconnect();
+    }
+  } finally { h.dispose(); }
+});
+
 test('screen host rejoins with its private identity and old host loses controls', () => {
   const h = harness();
   const { host, created, code } = h.lobby();
