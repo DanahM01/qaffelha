@@ -22,6 +22,10 @@ const SCORE_UPDATE = 'score:update';
 const ROUND_END = 'round:end';
 const GAME_OVER = 'game:over';
 const GAME_RESTART = 'game:restart';
+// Team Mode cards (EVENTS.md §6). Freeze: PB-16 (Danah).
+const CARD_PLAYED = 'card:played';
+const PLAYER_FROZEN = 'player:frozen';
+const NOTICE_MS = 3000;
 
 const STORE_KEY = 'qaffelha';
 const ACK_TIMEOUT_MS = 10000;
@@ -95,6 +99,9 @@ export default function HostApp() {
   const [gameOver, setGameOver] = useState(null); // game:over payload
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState(false);
+  const [cardNotice, setCardNotice] = useState(null); // last card:played, shown for 3 s
+  const [frozenIds, setFrozenIds] = useState([]); // players frozen right now (player:frozen)
+  const timers = useRef(new Set());
   const playersRef = useRef([]);
   playersRef.current = players;
   const pending = useRef(null); // one request per attempt, even when StrictMode runs the effect twice
@@ -117,6 +124,8 @@ export default function HostApp() {
   const startRound = (payload) => {
     setLocked([]);
     setScores([]);
+    setFrozenIds([]);
+    setCardNotice(null);
     showRound(payload);
   };
 
@@ -137,6 +146,22 @@ export default function HostApp() {
     setRestarting(false);
     setRestartError(false);
     setStatus('over');
+  };
+
+  const later = (callback, delay) => {
+    const id = setTimeout(() => { timers.current.delete(id); callback(); }, Math.max(0, delay));
+    timers.current.add(id);
+  };
+  useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current.clear(); }, []);
+  const showCard = (payload) => {
+    const notice = { ...payload, sequence: Date.now() };
+    setCardNotice(notice);
+    later(() => setCardNotice((current) => (current === notice ? null : current)), NOTICE_MS);
+  };
+  const freezePlayer = (payload) => {
+    setFrozenIds((ids) => [...ids.filter((id) => id !== payload.id), payload.id]);
+    later(() => setFrozenIds((ids) => ids.filter((id) => id !== payload.id)),
+      payload.until - Date.now() - clockOffset.current);
   };
 
   useEffect(() => {
@@ -167,6 +192,8 @@ export default function HostApp() {
     socket.on(SCORE_UPDATE, updateScores);
     socket.on(ROUND_END, endRound);
     socket.on(GAME_OVER, endGame);
+    socket.on(CARD_PLAYED, showCard);
+    socket.on(PLAYER_FROZEN, freezePlayer);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -197,6 +224,8 @@ export default function HostApp() {
       socket.off(SCORE_UPDATE, updateScores);
       socket.off(ROUND_END, endRound);
       socket.off(GAME_OVER, endGame);
+      socket.off(CARD_PLAYED, showCard);
+      socket.off(PLAYER_FROZEN, freezePlayer);
     };
   }, [fake, attempt, navigate]);
 
@@ -259,6 +288,8 @@ export default function HostApp() {
           locked={locked}
           players={players}
           scores={scores}
+          cardNotice={cardNotice}
+          frozenIds={frozenIds}
         />
       )}
       {status === 'roundEnd' && roundEnd && <RoundEnd {...roundEnd} />}

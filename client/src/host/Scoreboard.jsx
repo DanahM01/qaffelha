@@ -1,6 +1,7 @@
 // Owner: Renad. Live round scoreboard (SPEC §6.3), the .q-flap board from theme/SimV2.jsx.
 // Names and out flags come from room:players, points from score:update.
 import { useEffect, useRef } from 'react';
+import { SnowflakeIcon } from '../theme/Logo.jsx';
 
 // Sizing only, on top of .q-flap. Up to 6 rows the theme's board already fits; from 7 the rows
 // lose their spare height so 12 players fit without shrinking the text. The font cap and the
@@ -21,7 +22,7 @@ function rankPlayers(players, scores) {
     .sort((a, b) => b.score - a.score);
 }
 
-export default function Scoreboard({ players, scores, title = 'نقاط الجولة' }) {
+export default function Scoreboard({ players, scores, title = 'نقاط الجولة', frozenIds = [] }) {
   const ranked = rankPlayers(players, scores);
   const compact = ranked.length >= COMPACT_FROM;
   const tile = compact ? TILE_COMPACT : undefined;
@@ -40,7 +41,8 @@ export default function Scoreboard({ players, scores, title = 'نقاط الجو
 
   // Ties can't be broken here (the server uses lastCorrectAt), so every tied row is marked,
   // and nobody is in danger while all scores are equal.
-  const rowClass = (p) => {
+  const rowClass = (p) => `${baseClass(p)}${frozenIds.includes(p.id) ? ' is-frozen' : ''}`;
+  const baseClass = (p) => {
     if (p.score === low && low < top) return 'is-danger';
     return p.score === top && top > 0 ? 'is-leader' : '';
   };
@@ -51,9 +53,10 @@ export default function Scoreboard({ players, scores, title = 'نقاط الجو
       <div className="q-flap q-flap--v2" style={compact ? { ...BOARD_FIT, ...BOARD_COMPACT } : BOARD_FIT}>
         {ranked.map((p, i) => (
           <div key={p.id} className={`q-flap__row ${rowClass(p)}`}>
+            {frozenIds.includes(p.id) ? <span className="q-flap__move q-flap__frozen" role="img" aria-label="متجمّد"><SnowflakeIcon /></span> : (
             <span className={`q-flap__move ${moves[p.id] > 0 ? 'q-flap__move--up' : moves[p.id] < 0 ? 'q-flap__move--down' : ''}`} aria-hidden="true">
               {moves[p.id] > 0 ? '▲' : moves[p.id] < 0 ? '▼' : ''}
-            </span>
+            </span>)}
             <span className="q-flap__tile" style={tile}><span key={i + p.name}>{i + 1}</span></span>
             <span className="q-flap__tile q-flap__tile--name" style={{ ...tile, ...NAME_TILE }}><span key={p.name + i} style={NAME_TEXT}>{p.name}</span></span>
             <span className="q-flap__tile q-flap__tile--score" style={tile}><span key={`${p.id}-${p.score}`}>{p.score < 0 ? `−${Math.abs(p.score)}` : p.score}</span></span>
