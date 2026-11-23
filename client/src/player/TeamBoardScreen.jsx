@@ -1,6 +1,7 @@
 import TeamBoard from "./TeamBoard.jsx";
 import { TEAM_NAMES, myTeam, isSittingOut } from "./teamState.js";
 import useServerSeconds from "./useServerSeconds.js";
+import TeamStrip from "../theme/TeamStrip.jsx";
 
 export default function TeamBoardScreen({
   state,
@@ -37,25 +38,20 @@ export default function TeamBoardScreen({
         : `دور ${TEAM_NAMES[state.turn?.team] || "الفريق"}`;
   return (
     <>
-      <h1 className="q-team-heading" role="status">
-        {title}
-      </h1>
-      {state.status !== "battleEnd" && (
-        <span
-          className="q-team-deadline"
-          role="timer"
-          aria-label={`باقي ${seconds} ثانية`}
-        >
-          <b>{seconds}</b> ثواني
-        </span>
-      )}
-      <div className="q-m-me">
-        <span>
-          نقاط الأول<b>{state.teamPoints?.A ?? 0}</b>
-        </span>
-        <span>
-          نقاط الثاني<b>{state.teamPoints?.B ?? 0}</b>
-        </span>
+      <TeamStrip team={team} values={state.teamPoints} />
+      <div className="q-team-turn">
+        <h1 className="q-team-heading" role="status">
+          {title}
+        </h1>
+        {state.status !== "battleEnd" && (
+          <span
+            className="q-team-turn__sec"
+            role="timer"
+            aria-label={`باقي ${seconds} ثانية`}
+          >
+            {seconds}
+          </span>
+        )}
       </div>
       <TeamBoard
         board={state.board}

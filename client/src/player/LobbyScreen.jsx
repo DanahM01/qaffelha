@@ -113,13 +113,9 @@ function GuestWaiting({ code, players, meId, hostId }) {
       </div>
       <div
         className="q-m-hero"
-        style={{ gap: "var(--q-space-4)", minHeight: "min(24rem, 100vw)", marginInline: "calc(var(--q-space-4) * -1)", overflowX: "clip" }}
+        style={{ gap: "var(--q-space-4)", minHeight: "min(15rem, 62vw)", marginInline: "calc(var(--q-space-4) * -1)", overflowX: "clip" }}
       >
-        <div className="q-m-sun" style={{ "--_w": "min(150%, 36rem)" }} />
-        <span className="q-m-onair">
-          <i />
-          على الهوا
-        </span>
+        <div className="q-m-sun" style={{ "--_w": "min(105%, 26rem)" }} />
         <h1 className="q-m-title" style={{ fontSize: "clamp(1.9rem, 9vw, 2.8rem)" }}>
           دخلت!
           <br />
@@ -157,8 +153,8 @@ function GuestWaiting({ code, players, meId, hostId }) {
           ))}
         </div>
       </div>
-      <div className="q-m-rules">
-        <span className="q-round-label q-m-rules__title">طريقة اللعب</span>
+      <details className="q-m-rules">
+        <summary className="q-round-label q-m-rules__title">طريقة اللعب</summary>
         <ol>
           <li>
             <span className="q-step__n">1</span>الفئة تطلع، وعندك 20 ثانية
@@ -175,7 +171,7 @@ function GuestWaiting({ code, players, meId, hostId }) {
             <span className="q-step__n">4</span>أقل واحد بالنقاط يطلع
           </li>
         </ol>
-      </div>
+      </details>
     </>
   );
 }
