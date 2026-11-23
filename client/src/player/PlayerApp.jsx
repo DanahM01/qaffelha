@@ -9,6 +9,8 @@ import CountdownScreen from "./CountdownScreen.jsx";
 import RoundScreen from "./RoundScreen.jsx";
 import RoundEndScreen from "./RoundEndScreen.jsx";
 import ResultsScreen from "./ResultsScreen.jsx";
+import LockCardWindow from "../cards/LockCardWindow.jsx";
+import LockNotice from "../cards/LockNotice.jsx";
 
 export default function PlayerApp() {
   const location = useLocation();
@@ -67,6 +69,10 @@ export default function PlayerApp() {
                 }
                 message={sharingError}
               />
+            ) : session.state.gameMode === "teams" && session.state.status === "cardWindow" ? (
+              <LockCardWindow state={session.state} meId={session.identity.playerId}
+                offset={session.offset} disabled={session.busy || session.reconnecting || !session.connected}
+                onCard={session.playCard} />
             ) : session.state.status === "countdown" ? (
               <CountdownScreen state={session.state} offset={session.offset} />
             ) : round ? (
@@ -124,6 +130,7 @@ export default function PlayerApp() {
           />
         )}
       </div>
+      <LockNotice notice={session.cardNotice} />
     </main>
   );
 }

@@ -167,6 +167,8 @@ export function cardPlayError(room, playerId, card) {
   const sittingOut = room.sitout?.[player.team] ?? null;
   if (sittingOut && sittingOut !== playerId) return 'NOT_ALLOWED';
   if (!(room.cards?.[player.team]?.[card] > 0)) return 'NO_CARD';
+  // PB-17: a sitting-out chooser's Lock is final for this battle, including later cards.
+  if (sittingOut && room.cardChoices?.[player.team] && room.cardChoices[player.team] !== card) return 'NOT_ALLOWED';
   return null;
 }
 
@@ -345,7 +347,33 @@ export function submitBoardAnswer(room, playerId, text, now) {
   if (!player?.team || room.sitout?.[player.team] === playerId) {
     return { room, word: null, ack: { result: 'closed', delta: 0, score: player?.score ?? 0 } };
   }
-  return submitAnswer(room, playerId, text, now);
+  const result = submitAnswer(room, playerId, text, now);
+  // PB-17: only a new correct answer earns the extra point; penalties/repeats stay unchanged.
+  if (room.gameMode !== 'teams' || result.ack.result !== 'correct' || room.chosen?.lockedBy !== player.team) return result;
+  const players = new Map(result.room.players);
+  players.set(playerId, { ...players.get(playerId), score: result.ack.score + 1 });
+  return { ...result, room: { ...result.room, players },
+    ack: { ...result.ack, delta: 2, score: result.ack.score + 1 } };
+}
+
+// PB-17 Lock: the non-choosing team doubles its correct answers for this battle only.
+export function playLock(room, playerId, now, target) {
+  const error = cardPlayError(room, playerId, 'lock');
+  if (error) return { error };
+  const player = room.players.get(playerId);
+  if (!player.connected || player.out) return { error: 'NOT_ALLOWED' };
+  if (room.status !== 'cardWindow' || !Number.isFinite(now) || !Number.isFinite(room.cardWindowEndsAt) ||
+      now >= room.cardWindowEndsAt || now < room.cardWindowEndsAt - TEAM_LIMITS.cards) return { error: 'NOT_NOW' };
+  const chosen = room.chosen;
+  if (!chosen || !['A', 'B'].includes(chosen.team) || !room.board?.some(square => square.id === chosen.squareId) ||
+      (target !== undefined && target !== chosen.squareId)) return { error: 'BAD_TARGET' };
+  if (chosen.team === player.team) return { error: 'NOT_ALLOWED' };
+  if (chosen.lockedBy) return { error: 'NOT_NOW' };
+  const team = player.team;
+  return { room: { ...room, chosen: { ...chosen, lockedBy: team },
+    cards: { ...room.cards, [team]: { ...room.cards[team], lock: room.cards[team].lock - 1 } },
+    cardChoices: { ...room.cardChoices, [team]: 'lock' } },
+    team, by: { id: player.id, name: player.name }, target: chosen.squareId };
 }
 
 export function finishTeamBattle(room) {

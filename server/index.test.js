@@ -383,7 +383,7 @@ test('PB-16 freeze card over sockets: announce, freeze the top rival for 3 s, on
   assert.equal(frozen.until - 103000 >= 3000, true);
   assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'frozen');
   assert.deepEqual(players[1].request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NO_CARD' });
-  assert.deepEqual(players[1].request('card:play', { code, card: 'lock' }), { ok: false, error: 'NO_CARD' });
+  assert.deepEqual(players[1].request('card:play', { code, card: 'lock' }), { ok: false, error: 'NOT_NOW' });
   assert.deepEqual(h.connect().request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_ALLOWED' });
   h.advance(3000);
   assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'correct');
