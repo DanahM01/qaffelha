@@ -167,6 +167,8 @@ export function cardPlayError(room, playerId, card) {
   const sittingOut = room.sitout?.[player.team] ?? null;
   if (sittingOut && sittingOut !== playerId) return 'NOT_ALLOWED';
   if (!(room.cards?.[player.team]?.[card] > 0)) return 'NO_CARD';
+  // PB-17: a sitting-out chooser's Lock is final for this battle, including later cards.
+  if (sittingOut && room.cardChoices?.[player.team] && room.cardChoices[player.team] !== card) return 'NOT_ALLOWED';
   return null;
 }
 
@@ -346,7 +348,33 @@ export function submitBoardAnswer(room, playerId, text, now) {
   if (!player?.team || room.sitout?.[player.team] === playerId) {
     return { room, word: null, ack: { result: 'closed', delta: 0, score: player?.score ?? 0 } };
   }
-  return submitAnswer(room, playerId, text, now);
+  const result = submitAnswer(room, playerId, text, now);
+  // PB-17: only a new correct answer earns the extra point; penalties/repeats stay unchanged.
+  if (room.gameMode !== 'teams' || result.ack.result !== 'correct' || room.chosen?.lockedBy !== player.team) return result;
+  const players = new Map(result.room.players);
+  players.set(playerId, { ...players.get(playerId), score: result.ack.score + 1 });
+  return { ...result, room: { ...result.room, players },
+    ack: { ...result.ack, delta: 2, score: result.ack.score + 1 } };
+}
+
+// PB-17 Lock: the non-choosing team doubles its correct answers for this battle only.
+export function playLock(room, playerId, now, target) {
+  const error = cardPlayError(room, playerId, 'lock');
+  if (error) return { error };
+  const player = room.players.get(playerId);
+  if (!player.connected || player.out) return { error: 'NOT_ALLOWED' };
+  if (room.status !== 'cardWindow' || !Number.isFinite(now) || !Number.isFinite(room.cardWindowEndsAt) ||
+      now >= room.cardWindowEndsAt || now < room.cardWindowEndsAt - TEAM_LIMITS.cards) return { error: 'NOT_NOW' };
+  const chosen = room.chosen;
+  if (!chosen || !['A', 'B'].includes(chosen.team) || !room.board?.some(square => square.id === chosen.squareId) ||
+      (target !== undefined && target !== chosen.squareId)) return { error: 'BAD_TARGET' };
+  if (chosen.team === player.team) return { error: 'NOT_ALLOWED' };
+  if (chosen.lockedBy) return { error: 'NOT_NOW' };
+  const team = player.team;
+  return { room: { ...room, chosen: { ...chosen, lockedBy: team },
+    cards: { ...room.cards, [team]: { ...room.cards[team], lock: room.cards[team].lock - 1 } },
+    cardChoices: { ...room.cardChoices, [team]: 'lock' } },
+    team, by: { id: player.id, name: player.name }, target: chosen.squareId };
 }
 
 export function finishTeamBattle(room) {
@@ -464,5 +492,45 @@ export function submitTeamAnswer(room, playerId, text, now) {
 export function playTeamFreeze(room, playerId, now, randomValue) {
   const choice = recordTeamCardChoice(room, playerId, 'freeze');
   if (choice.error) return { error: choice.error };
-  return playFreeze(choice.room, playerId, now, randomValue);
+  return playFreeze(choice.room, playerId, now, randomValue);}
+// PB-18 Mine card (Renad). A hidden mine on a free square: if the rival team loses the battle
+// there it loses MINE_PENALTY team points; if the rival wins there the mine is removed silently.
+export const MINE_PENALTY = 3;
+
+// Own team's turn only: before choosing (`turn`) or after it (`cardWindow`). Not the chosen square.
+export function playMine(room, playerId, squareId, now) {
+  const error = cardPlayError(room, playerId, 'mine');
+  if (error) return { error };
+  const player = room.players.get(playerId);
+  const team = player.team;
+  const ownTurn = room.status === 'turn' && room.turn?.team === team && now < room.turn.endsAt;
+  const ownWindow = room.status === 'cardWindow' && room.chosen?.team === team && now < room.cardWindowEndsAt;
+  if (!ownTurn && !ownWindow) return { error: 'NOT_NOW' };
+  // PB-20: a sitting-out chooser's card choice is final, as for Steal in chooseSquare.
+  if (room.sitout?.[team] && room.cardChoices?.[team]) return { error: 'NOT_ALLOWED' };
+  const square = Number.isInteger(squareId) ? room.board.find(entry => entry.id === squareId) : null;
+  if (!square || square.owner || square.mine || square.id === room.chosen?.squareId) return { error: 'BAD_TARGET' };
+  return { room: { ...room,
+    board: room.board.map(entry => entry.id === square.id ? { ...entry, mine: team } : entry),
+    cards: { ...room.cards, [team]: { ...room.cards[team], mine: room.cards[team].mine - 1 } },
+    cardChoices: { ...room.cardChoices, [team]: 'mine' } },
+    team, by: { id: player.id, name: player.name } };
+}
+
+// The squares a team has mined; only that team may see them (board:mines).
+export function teamMines(room, team) {
+  return (room.board ?? []).filter(square => square.mine === team).map(square => square.id);
+}
+
+// Runs after finishTeamBattle, on the battled square. `owner` tells the caller whose mine list changed.
+// A draw (no winner) keeps the mine for now; the Product Owner still has to confirm that case.
+export function settleMine(room, winnerTeam) {
+  const square = room.board?.find(entry => entry.id === room.chosen?.squareId);
+  if (!square?.mine || !winnerTeam) return { room };
+  const owner = square.mine;
+  const board = room.board.map(entry => entry.id === square.id ? { ...entry, mine: null } : entry);
+  if (winnerTeam !== owner) return { room: { ...room, board }, owner };
+  const rival = otherTeam(owner);
+  return { room: { ...room, board, teamPoints: { ...room.teamPoints, [rival]: room.teamPoints[rival] - MINE_PENALTY } },
+    owner, exploded: { squareId: square.id, team: rival, points: -MINE_PENALTY } };
 }

@@ -14,6 +14,8 @@ import TeamResultsScreen from "./TeamResultsScreen.jsx";
 import TeamBoardScreen from "./TeamBoardScreen.jsx";
 import TeamCardChoices from "./TeamCardChoices.jsx";
 import { myTeam } from "./teamState.js";
+import LockCardWindow from "../cards/LockCardWindow.jsx";
+import LockNotice from "../cards/LockNotice.jsx";
 
 export default function PlayerApp() {
   const location = useLocation();
@@ -224,6 +226,7 @@ export default function PlayerApp() {
           />
         )}
       </div>
+      <LockNotice notice={session.cardNotice} />
     </main>
   );
 }

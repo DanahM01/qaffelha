@@ -8,9 +8,11 @@ import { MongoClient } from 'mongodb';
 import * as teamRules from './game.js';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, rejoinSnapshot, playFreeze, teamGameResult, prepareTeamSitouts,
+ playersPayload, scoresPayload, rejoinSnapshot, playFreeze, teamGameResult, prepareTeamSitouts,
   TEAM_LIMITS, assignTeams, beginTeamGame, beginTeamTurn, chooseSquare, automaticSquare,
   boardPayload, teamScores, submitBoardAnswer, finishTeamBattle, restartTeamRoom } from './game.js';
+import { playMine, teamMines, settleMine } from './game.js'; // PB-18 Mine card (Renad)
+import { playLock } from './game.js'; // PB-17 Lock card (Leena)
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -20,6 +22,8 @@ const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin:
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const TEAM_EVENTS = Object.freeze({ set: 'team:set', shuffle: 'team:shuffle', board: 'board:update',
   turn: 'turn:start', choose: 'square:choose', chosen: 'battle:chosen', end: 'battle:end', sitout: 'team:sitout' });
+// PB-18: board:mines goes only to the owner team's sockets; mine:exploded goes to everyone.
+const MINE_EVENTS = Object.freeze({ mines: 'board:mines', exploded: 'mine:exploded' });
 const payloadObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const roomCode = (value) => typeof value === 'string' && /^[A-Za-z]{4}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
 
@@ -163,6 +167,14 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
 
   // PB-14: the team lifecycle uses its own phase timer and never enters classic elimination.
   function publishBoard(room) { emit(room, TEAM_EVENTS.board, boardPayload(room)); }
+  // PB-18: each socket is in a Socket.IO room named after its id, so this reaches only that team's
+  // connected players, never the big screen or the rival team. Offline players get it in room:rejoin.
+  function sendMines(room, team) {
+    const payload = { mines: teamMines(room, team) };
+    for (const player of room.players.values()) {
+      if (player.team === team && player.connected && player.socketId) io.to(player.socketId).emit(MINE_EVENTS.mines, payload);
+    }
+  }
   function beginTurn(code, team) {
     const room = beginTeamTurn(rooms.get(code), team, now());
     rooms.set(code, room);
@@ -216,9 +228,14 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
   }
   function endTeamBattle(code) {
     const result = finishTeamBattle(rooms.get(code));
-    const room = result.room;
+    // PB-18: settle a mine on this square before the result is announced and before PB-15 resolves
+    // the game, so board:update and the end-game tie-break both use the points after the −3.
+    const mine = settleMine(result.room, result.payload.winnerTeam);
+    const room = mine.room;
     rooms.set(code, room);
     emit(room, TEAM_EVENTS.end, result.payload);
+    if (mine.exploded) emit(room, MINE_EVENTS.exploded, mine.exploded);
+    if (mine.owner) sendMines(room, mine.owner);
     publishBoard(room);
     log(`room ${code} battle ${room.round} end`);
     // PB-15 supplies the pure winning-line/full-board resolver; retain its result for PB-28.
@@ -381,7 +398,29 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
         log(`room ${room.code} card freeze`);
         return;
       }
-      // lock, mine and steal are added by their own stories (SPEC §17.6).
+      if (input.card === 'mine') {
+        const result = playMine(room, player.id, input.target, now());
+        if (result.error) return ack({ ok: false, error: result.error });
+        rooms.set(room.code, result.room);
+        ack({ ok: true });
+        // The square stays secret: no target for anyone. The owner team learns it from board:mines.
+        emit(result.room, EVENTS.cardPlayed, { team: result.team, card: 'mine', by: result.by });
+        sendMines(result.room, result.team);
+        publishBoard(result.room);
+        log(`room ${room.code} card mine`);
+        return;
+      }
+      if (input.card === 'lock') {
+        const result = playLock(room, player.id, now(), input.target);
+        if (result.error) return ack({ ok: false, error: result.error });
+        rooms.set(room.code, result.room);
+        ack({ ok: true });
+        emit(result.room, EVENTS.cardPlayed, { team: result.team, card: 'lock', by: result.by, target: result.target });
+        publishBoard(result.room);
+        log(`room ${room.code} card lock`);
+        return;
+      }
+      // Steal is sent through square:choose, not card:play (EVENTS.md §6).
       ack({ ok: false, error: 'NO_CARD' });
     });
     handle(EVENTS.restart, (input, ack) => {

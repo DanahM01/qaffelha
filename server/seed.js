@@ -4,7 +4,7 @@ import { MongoClient } from 'mongodb';
 import { normalize } from './arabic.js';
 
 const categories = JSON.parse(await readFile(new URL('../database/categories.json', import.meta.url), 'utf8'));
-if (!Array.isArray(categories) || categories.length !== 30) throw new Error('Expected 30 categories');
+if (!Array.isArray(categories) || categories.length < 30) throw new Error('Expected at least 30 categories');
 const ids = new Set();
 for (const category of categories) {
   if (typeof category._id !== 'string' || !category._id.trim() || ids.has(category._id)) {
