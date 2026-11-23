@@ -118,6 +118,10 @@ export const sounds = {
     tone(180, 0, 0.08, { type: 'square', volume: 0.15 });
     tone(120, 0.05, 0.1, { type: 'square', volume: 0.15 });
   },
+  // A sticker reaction reached the big screen.
+  pop() {
+    tone(500, 0, 0.12, { type: 'sine', volume: 0.12, slideTo: 1100 });
+  },
   minus() {
     tone(200, 0, 0.3, { type: 'sawtooth', volume: 0.18, slideTo: 110 });
   },
@@ -200,6 +204,9 @@ socket.on('round:end', ({ eliminated } = {}) => {
     buzz(300);
   }
   else later(600, sounds.safe);
+});
+socket.on('reaction:show', () => {
+  if (window.location.pathname.startsWith('/host')) sounds.pop();
 });
 socket.on('game:over', () => {
   clearTimers();

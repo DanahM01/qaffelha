@@ -1,7 +1,8 @@
 // Owner: Reef. Phone routes share one server-authoritative session.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import Logo from "../theme/Logo.jsx";
+import { socket } from "../socket.js";
+import Logo, { ReactionSticker } from "../theme/Logo.jsx";
 import usePlayerSession from "./usePlayerSession.js";
 import JoinScreen from "./JoinScreen.jsx";
 import LobbyScreen from "./LobbyScreen.jsx";
@@ -9,6 +10,53 @@ import CountdownScreen from "./CountdownScreen.jsx";
 import RoundScreen from "./RoundScreen.jsx";
 import RoundEndScreen from "./RoundEndScreen.jsx";
 import ResultsScreen from "./ResultsScreen.jsx";
+
+const REACTION_MS = 3300;
+const REACTION_MAX = 12;
+
+// Phones-only rooms have no big screen, so every phone floats the stickers (EVENTS.md §7).
+function PhoneReactions() {
+  const [reactions, setReactions] = useState([]);
+  useEffect(() => {
+    const timers = new Set();
+    const show = (payload) => {
+      const reaction = {
+        key: `${Date.now()}-${Math.random()}`,
+        kind: payload.reaction,
+        name: payload.by?.name ?? "",
+        team: payload.by?.team ?? null,
+        x: `${8 + Math.random() * 70}%`,
+        drift: `${Math.round(Math.random() * 40 - 20)}px`,
+        spin: `${Math.round(Math.random() * 30 - 15)}deg`,
+      };
+      setReactions((list) => [...list.slice(1 - REACTION_MAX), reaction]);
+      const id = setTimeout(() => {
+        timers.delete(id);
+        setReactions((list) => list.filter((entry) => entry !== reaction));
+      }, REACTION_MS);
+      timers.add(id);
+    };
+    socket.on("reaction:show", show);
+    return () => {
+      socket.off("reaction:show", show);
+      timers.forEach(clearTimeout);
+    };
+  }, []);
+  return (
+    <div className="q-reactions q-reactions--phone" aria-hidden="true">
+      {reactions.map((r) => (
+        <span
+          key={r.key}
+          className={`q-reaction${r.team ? ` q-reaction--team-${r.team}` : ""}`}
+          style={{ "--_x": r.x, "--_drift": r.drift, "--_spin": r.spin }}
+        >
+          <ReactionSticker kind={r.kind} className="q-reaction__sticker" />
+          <span className="q-reaction__name">{r.name}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export default function PlayerApp() {
   const location = useLocation();
@@ -40,6 +88,7 @@ export default function PlayerApp() {
   const round = session.identity && session.state.status === "round";
   return (
     <main className="q-app" dir="rtl" lang="ar">
+      {session.state.mode === "phone" && <PhoneReactions />}
       <div className={round ? "q-home q-m q-m-round" : "q-screen-player"}>
         {(session.reconnecting || !session.connected) && (
           <p className="q-alert q-alert--info" role="status">

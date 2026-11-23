@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { EyeIcon, LockIcon, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
+import { socket } from "../socket.js";
+import { EyeIcon, LockIcon, ReactionSticker, REACTION_LABELS, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
 
 const MESSAGES = {
@@ -11,6 +12,36 @@ const MESSAGES = {
   frozen: "متجمّد! استنى ثواني",
 };
 const TEAM_NAMES = { A: "الفريق الأول", B: "الفريق الثاني" };
+// Sticker reactions (EVENTS.md §7): only for players who are out or sitting out.
+const REACTIONS = ["laugh", "fire", "shock"];
+const REACTION_GAP_MS = 400;
+
+function ReactionBar() {
+  const [busy, setBusy] = useState(false);
+  function send(reaction) {
+    if (busy) return;
+    setBusy(true);
+    socket.emit("reaction:send", { reaction });
+    setTimeout(() => setBusy(false), REACTION_GAP_MS);
+  }
+  return (
+    <div className="q-react-bar" role="group" aria-label="تفاعل مع اللعب">
+      {REACTIONS.map((reaction) => (
+        <button
+          key={reaction}
+          type="button"
+          className="q-react-btn"
+          disabled={busy}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => send(reaction)}
+        >
+          <ReactionSticker kind={reaction} className="q-react-btn__sticker" />
+          <span className="q-react-btn__label">{REACTION_LABELS[reaction]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function RoundScreen({
   state,
@@ -46,6 +77,7 @@ export default function RoundScreen({
   const freezeLeft = state.cards?.[team]?.freeze ?? 1;
   const sittingOut = state.sitout?.[team] ?? null;
   const mayPlayCard = !sittingOut || sittingOut === meId;
+  const canReact = out || (teams && sittingOut === meId);
   const canFreeze =
     teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && seconds > 3;
 
@@ -147,6 +179,7 @@ export default function RoundScreen({
             </div>
           )}
         </div>
+        {canReact && <ReactionBar />}
         {out ? (
           <p className="q-spectate">
             <EyeIcon />

@@ -2385,3 +2385,110 @@ body {
   .q-frozen svg { animation: none; }
   .q-card-notice { animation: q-m-toast-out 300ms ease-in 2.7s forwards; }
 }
+
+/* --------------------------------------------------------------------------
+   16) ريأكشن الملصقات (اللي طلع أو جالس)
+   -------------------------------------------------------------------------- */
+/* ٣) ريأكشن: ملصقات بستايل اللعبة في جوال اللي طلع أو جالس، وتطير على الشاشة الكبيرة */
+.q-react-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--q-space-2); }
+.q-react-bar + * { margin-top: var(--q-space-3); }
+.q-react-btn {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--q-space-1);
+  min-height: 84px;
+  padding: var(--q-space-2) var(--q-space-1);
+  background: var(--q-panel);
+  color: var(--q-text);
+  border: 2px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  font: inherit;
+  font-weight: var(--q-fw-black);
+  transition: background-color 120ms, border-color 120ms;
+}
+.q-react-btn__sticker {
+  width: 2.6rem;
+  height: 2.6rem;
+  rotate: -6deg;
+  transition: transform 160ms var(--q-ease-bounce);
+}
+.q-react-btn:nth-child(2) .q-react-btn__sticker { rotate: 4deg; }
+.q-react-btn:nth-child(3) .q-react-btn__sticker { rotate: -3deg; }
+.q-react-btn__label { font-size: var(--q-fs-sm); line-height: 1.1; }
+.q-react-btn:active { background: color-mix(in srgb, var(--q-primary) 22%, var(--q-bg)); border-color: var(--q-primary); }
+.q-react-btn:active .q-react-btn__sticker { transform: translateY(-5px) scale(1.18); }
+.q-react-btn:focus-visible { outline: 3px solid var(--q-primary); outline-offset: 2px; }
+/* المهلة بين الملصقات قصيرة (٤٠٠ms) — بدون بهتان عشان ما ترمش الأزرار */
+.q-react-btn:disabled { cursor: default; }
+
+/* اللي طلع: الملصقات والعنوان «تتفرج» في لوحة وحدة تحت */
+.q-m-dock:has(> .q-react-bar):has(> .q-spectate) {
+  display: flex;
+  flex-direction: column;
+  padding: var(--q-space-3);
+  background: var(--q-panel);
+  border: var(--q-line-thin) solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: -4px 4px 0 var(--q-stack-3);
+}
+.q-m-dock:has(> .q-react-bar) > .q-spectate {
+  order: -1;
+  min-height: 0;
+  margin: 0 0 var(--q-space-3);
+  padding: 0 0 var(--q-space-2);
+  justify-content: flex-start;
+  background: none;
+  border: 0;
+  border-bottom: 2px dashed var(--q-ink-600);
+  color: var(--q-text);
+  font-size: var(--q-fs-sm);
+}
+.q-m-dock:has(> .q-react-bar) > .q-react-bar + * { margin-top: 0; }
+.q-m-dock:has(> .q-react-bar):has(> .q-spectate) .q-react-btn { background: var(--q-bg); }
+.q-m-dock:has(> .q-react-bar):has(> .q-spectate) .q-react-btn:active { background: color-mix(in srgb, var(--q-primary) 22%, var(--q-bg)); }
+@media (prefers-reduced-motion: reduce) {
+  .q-react-btn__sticker { transition: none; }
+  .q-react-btn:active .q-react-btn__sticker { transform: none; }
+}
+.q-reactions { position: fixed; inset: 0; z-index: 40; pointer-events: none; overflow: hidden; }
+.q-reaction {
+  position: absolute;
+  bottom: -2em;
+  inset-inline-start: var(--_x, 50%);
+  display: grid;
+  justify-items: center;
+  gap: 0.15em;
+  font-size: clamp(3.2rem, 6vw, 6.5rem);
+  line-height: 1;
+  animation: q-reaction-fly 3.2s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+.q-reaction__sticker { width: 1em; height: 1em; filter: drop-shadow(0 0 0.06em rgba(0, 0, 0, 0.35)); }
+.q-reaction__name {
+  font-size: clamp(0.8rem, 1.1vw, 1.3rem);
+  font-weight: var(--q-fw-black);
+  color: var(--q-ink);
+  background: var(--q-surface);
+  border: 2px solid var(--q-border);
+  box-shadow: -2px 2px 0 var(--q-ink-900);
+  padding: 0.05em 0.55em;
+  white-space: nowrap;
+}
+.q-reaction--team-A .q-reaction__name { background: var(--q-team-a); color: var(--q-team-a-ink); }
+.q-reaction--team-B .q-reaction__name { background: var(--q-team-b); color: var(--q-team-b-ink); }
+@keyframes q-reaction-fly {
+  0% { transform: translateY(0) scale(0.4); opacity: 0; }
+  12% { transform: translateY(-18vh) scale(1.15); opacity: 1; }
+  50% { transform: translateY(-50vh) translateX(var(--_drift, 0)) scale(1) rotate(var(--_spin, 0deg)); opacity: 1; }
+  100% { transform: translateY(-95vh) translateX(calc(var(--_drift, 0) * -1)) scale(0.9); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-reaction { animation: q-reaction-fade 2.4s ease-out forwards; bottom: 15vh; }
+}
+@keyframes q-reaction-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+/* «جوالات بس»: الملصقات تطير على جوال كل لاعب، أصغر شوي */
+.q-reactions--phone .q-reaction { font-size: 3rem; }
+.q-reactions--phone .q-reaction__name { font-size: 0.75rem; }
