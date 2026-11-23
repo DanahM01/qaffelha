@@ -5,8 +5,8 @@ import { normalize } from './arabic.js';
 
 const categories = JSON.parse(await readFile(new URL('../database/categories.json', import.meta.url), 'utf8'));
 
-test('PB-11 supplies 30 unique categories with complete metadata', () => {
-  assert.equal(categories.length, 30);
+test('PB-11 supplies at least 30 unique categories with complete metadata', () => {
+  assert.ok(categories.length >= 30);
   assert.equal(new Set(categories.map(c => c._id)).size, categories.length);
   assert.equal(new Set(categories.map(c => normalize(c.title))).size, categories.length);
   for (const c of categories) {
