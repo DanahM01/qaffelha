@@ -157,7 +157,9 @@ export default function PlayerApp() {
         {session.identity ? (
           <>
             {session.state.gameMode === "teams" &&
-              session.state.status !== "over" && (
+              !["round", "turn", "cardWindow", "battleEnd", "over"].includes(
+                session.state.status,
+              ) && (
                 <TeamBadge
                   state={session.state}
                   meId={session.identity.playerId}
@@ -194,33 +196,18 @@ export default function PlayerApp() {
             ) : session.state.status === "countdown" ? (
               <CountdownScreen state={session.state} offset={session.offset} />
             ) : round ? (
-              <>
-                {teams && (
-                  <>
-                    <div className="q-m-me q-team-points">
-                      <span>
-                        نقاط الأول<b>{session.state.teamScores?.A ?? 0}</b>
-                      </span>
-                      <span>
-                        نقاط الثاني<b>{session.state.teamScores?.B ?? 0}</b>
-                      </span>
-                    </div>
-                    {cardChoices}
-                  </>
-                )}
-                <RoundScreen
-                  key={session.state.endsAt}
-                  state={session.state}
-                  meId={session.identity.playerId}
-                  offset={session.offset}
-                  feedback={session.feedback}
-                  disabled={!session.connected || session.reconnecting}
-                  onAnswer={session.answer}
-                  onCard={session.playCard}
-                  cardBusy={session.busy}
-                  cardNotice={session.cardNotice}
-                />
-              </>
+              <RoundScreen
+                key={session.state.endsAt}
+                state={session.state}
+                meId={session.identity.playerId}
+                offset={session.offset}
+                feedback={session.feedback}
+                disabled={!session.connected || session.reconnecting}
+                onAnswer={session.answer}
+                onCard={session.playCard}
+                cardBusy={session.busy}
+                cardNotice={session.cardNotice}
+              />
             ) : session.state.status === "roundEnd" ? (
               <RoundEndScreen
                 state={session.state}

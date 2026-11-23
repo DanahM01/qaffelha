@@ -27,6 +27,9 @@ export default function RankingList({
             {player.name}
             {player.id === meId ? " (أنت)" : ""}
           </span>
+          {player.id === eliminatedId && (
+            <span className="q-stamp q-score-row__stamp">طلع!</span>
+          )}
           {scores && (
             <span className="q-score-row__pts q-ltr">{player.score}</span>
           )}

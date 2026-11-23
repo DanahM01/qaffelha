@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { CrownIcon } from "../theme/Logo.jsx";
 import { TEAM_NAMES, myTeam } from "./teamState.js";
-import TeamBadge from "./TeamBadge.jsx";
+import TeamStrip from "../theme/TeamStrip.jsx";
 import TeamBoard from "./TeamBoard.jsx";
 
 export default function TeamResultsScreen({
@@ -32,7 +32,6 @@ export default function TeamResultsScreen({
           الرئيسية
         </Link>
       </div>
-      <TeamBadge state={state} meId={meId} />
       <div
         className={!winner ? "q-card q-card--dark q-center" : "q-winner"}
         role="status"
@@ -44,6 +43,11 @@ export default function TeamResultsScreen({
             {TEAM_NAMES[winner]}
           </span>
         )}
+        {winner && winners.length > 0 && (
+          <p className="q-winner__names">
+            {winners.map((player) => player.name).join(" · ")}
+          </p>
+        )}
       </div>
       {!available && (
         <p className="q-alert q-alert--info">
@@ -53,34 +57,17 @@ export default function TeamResultsScreen({
       {state.board?.length === 16 && (
         <TeamBoard board={state.board} line={state.line} />
       )}
-      <div className="q-m-me">
-        <span>
-          مربعات الأول<b>{state.squares?.A ?? "—"}</b>
-        </span>
-        <span>
-          مربعات الثاني<b>{state.squares?.B ?? "—"}</b>
-        </span>
-      </div>
-      <div className="q-m-me">
-        <span>
-          نقاط الأول<b>{state.teamPoints?.A ?? "—"}</b>
-        </span>
-        <span>
-          نقاط الثاني<b>{state.teamPoints?.B ?? "—"}</b>
-        </span>
-      </div>
-      {winner && (
-        <>
-          <h2 className="q-eyebrow">الفريق الفائز</h2>
-          <div className="q-player-list">
-            {winners.map((player) => (
-              <span className="q-player-chip" key={player.id}>
-                {player.name}
-              </span>
-            ))}
-          </div>
-        </>
-      )}
+      <TeamStrip
+        team={team}
+        label="مربعات ونقاط الفرق"
+        values={state.squares}
+        fallback="—"
+        notes={
+          state.teamPoints
+            ? { A: `${state.teamPoints.A ?? 0} نقطة`, B: `${state.teamPoints.B ?? 0} نقطة` }
+            : undefined
+        }
+      />
       {isHost ? (
         <button
           type="button"

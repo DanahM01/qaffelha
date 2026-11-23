@@ -2556,3 +2556,180 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .q-lock-chip__icon, .q-lock-chip__icon path { animation: none; }
 }
+
+/* --------------------------------------------------------------------------
+   18) مؤقت الغروب — أعلى شاشة الجولة في الجوال (theme/SunsetTimer.jsx)
+       الشمس هي المؤقت وتغيب ورا الأفق. is-warn (≤10) / is-danger (≤5)
+   -------------------------------------------------------------------------- */
+.q-dusk {
+  --_sun: var(--q-timer-ok);
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  width: auto;
+  height: clamp(128px, 21cqh, 168px);
+  border: var(--q-line-thin) solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  background: var(--q-panel);
+  box-shadow: -4px 4px 0 var(--q-stack-3);
+  overflow: hidden;
+}
+.q-dusk.is-warn { --_sun: var(--q-timer-warn); }
+.q-dusk.is-danger { --_sun: var(--q-timer-danger); }
+.q-dusk__scene { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.q-dusk__sun,
+.q-dusk__num { transition: transform 1s linear; }
+.q-dusk__disc { fill: var(--_sun); transition: fill 400ms; }
+.q-dusk__cut { fill: var(--q-panel); }
+.q-dusk__rim { fill: none; stroke: var(--q-ink-900); stroke-width: 3; }
+.q-dusk__horizon { fill: var(--q-ink-900); }
+.q-dusk__num {
+  font-family: var(--q-font-led);
+  font-size: 34px;
+  font-weight: var(--q-fw-black);
+  font-variant-numeric: tabular-nums;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--q-cream-100);
+  stroke: var(--q-ink-900);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  direction: ltr;
+}
+.q-dusk.is-danger .q-dusk__num { fill: var(--q-red-300); animation: q-blink 1s steps(1) infinite; }
+.q-dusk__round {
+  position: absolute;
+  top: var(--q-space-2);
+  inset-inline-start: var(--q-space-3);
+  z-index: 1;
+  font-size: var(--q-fs-xs);
+  font-weight: var(--q-fw-black);
+  color: var(--q-text-muted);
+}
+/* اسم الفئة تحت الغروب: ظل واحد، وما يكسر أكثر من سطرين */
+.q-m-round .q-dusk + .q-category {
+  font-size: clamp(1.9rem, 9.5cqw, 2.5rem);
+  text-shadow: -3px 3px 0 var(--q-stack-2);
+  text-wrap: balance;
+  margin-block: var(--q-space-2) 0;
+}
+/* نقاطي · ترتيبي: سطر صغير فوق خانة الكتابة */
+.q-m-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  margin: 0 0 var(--q-space-2);
+  padding-inline: var(--q-space-1);
+  font-size: var(--q-fs-sm);
+  font-weight: var(--q-fw-heavy);
+  color: var(--q-text-muted);
+}
+.q-m-stats > span { display: inline-flex; align-items: baseline; gap: 0.4em; }
+.q-m-stats b { font-family: var(--q-font-led); font-size: 1.15em; color: var(--q-primary); direction: ltr; unicode-bidi: isolate; }
+.q-m-dock:has(> .q-react-bar):has(> .q-spectate) > .q-m-stats { order: -2; }
+@media (prefers-reduced-motion: reduce) {
+  .q-dusk__sun, .q-dusk__num { transition: none; }
+  .q-dusk.is-danger .q-dusk__num { animation: none; }
+}
+
+/* الفرق في الجولة: شريط نقاط الفريقين فوق، فريقك عليه علامة */
+.q-m-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: var(--q-line-thin) solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: -4px 4px 0 var(--q-stack-3);
+  overflow: hidden;
+}
+.q-m-teams__cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.45em 0.8em;
+  font-size: var(--q-fs-sm);
+  font-weight: var(--q-fw-black);
+  white-space: nowrap;
+  background: var(--q-surface-ink);
+  color: var(--q-text-muted);
+}
+.q-m-teams__cell + .q-m-teams__cell { border-inline-start: var(--q-line-thin) solid var(--q-border); }
+.q-m-teams__cell--a.is-mine { background: var(--q-team-a); color: var(--q-team-a-ink); }
+.q-m-teams__cell--b.is-mine { background: var(--q-team-b); color: var(--q-team-b-ink); }
+.q-m-teams__cell b { font-family: var(--q-font-led); font-size: 1.35em; direction: ltr; unicode-bidi: isolate; color: var(--q-primary); }
+.q-m-teams__cell.is-mine b { color: inherit; }
+.q-m-teams__mine {
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 0.8em;
+  font-style: normal;
+  font-size: 0.68rem;
+  line-height: 1;
+  opacity: 0.85;
+}
+.q-m-teams__cell.is-mine { padding-top: 0.85em; padding-bottom: 0.3em; }
+/* بطاقة القفل: ختم صغير مايل تحت اسم الفئة، يطلع بس لما تنلعب */
+.q-m-lockstamp { display: flex; justify-content: center; }
+.q-m-lockstamp:empty { display: none; }
+.q-m-lockstamp .q-badge { rotate: -2deg; font-size: var(--q-fs-xs); white-space: normal; text-align: center; }
+/* بطاقة التجميد صغيرة في سطر نقاطي */
+.q-m-stats { align-items: center; }
+.q-m-stats__card.q-btn { min-height: 34px; padding: 0 0.7em; font-size: var(--q-fs-xs); gap: 0.35em; box-shadow: -2px 2px 0 var(--q-ink-900); }
+.q-team-round .q-m-wall__list { padding-top: var(--q-space-1); }
+.q-m-teams__name { display: grid; gap: 0.1em; min-width: 0; }
+.q-m-teams__name small { font-size: 0.72rem; font-weight: var(--q-fw-heavy); opacity: 0.85; }
+
+/* لوحة الفرق: «دور الفريق» والثواني في سطر واحد */
+.q-team-turn { display: flex; align-items: center; justify-content: space-between; gap: var(--q-space-3); margin-block: var(--q-space-2) var(--q-space-1); }
+.q-team-turn .q-team-heading { margin: 0; }
+.q-team-turn__sec {
+  flex: none;
+  min-width: 2.3em;
+  padding: 0 0.25em;
+  text-align: center;
+  background: var(--q-timer-led-bg);
+  border: 3px solid var(--q-timer-ok);
+  color: var(--q-timer-ok);
+  font-family: var(--q-font-led);
+  font-size: var(--q-fs-lg);
+  font-weight: var(--q-fw-black);
+  line-height: 1.2;
+  text-shadow: 0 0 8px var(--q-timer-ok);
+  direction: ltr;
+}
+
+/* نتيجة الفرق: أسماء الفائزين داخل لوحة الفائز */
+.q-winner__names { margin: 0; font-size: var(--q-fs-sm); font-weight: var(--q-fw-heavy); color: var(--q-text); }
+.q-team-screen .q-winner .q-title { font-size: var(--q-fs-xl); }
+.q-team-screen .q-team-board .q-team-board__tile { min-height: 58px; }
+
+/* نهاية الجولة: سطر صغير فوق بدل البوكس، وختم «طلع!» على صف اللي طلع */
+.q-m-end__when { font-size: var(--q-fs-sm); font-weight: var(--q-fw-black); color: var(--q-text-muted); }
+.q-score-row { position: relative; }
+.q-score-row__stamp { position: absolute; inset-inline-end: 3.2em; top: 50%; translate: 0 -50%; font-size: var(--q-fs-sm); color: var(--q-locked); background: var(--q-surface); padding: 0 0.4em; line-height: 1.3; }
+
+/* انتظار اللاعب: «طريقة اللعب» تنفتح بضغطة */
+details.q-m-rules { gap: 0; padding: var(--q-space-3) var(--q-space-4); }
+details.q-m-rules[open] { gap: var(--q-space-3); }
+details.q-m-rules > summary { cursor: pointer; list-style: none; }
+details.q-m-rules > summary::-webkit-details-marker { display: none; }
+details.q-m-rules > summary::after { content: " +"; }
+details.q-m-rules[open] > summary::after { content: " −"; }
+
+/* لوبي المضيف: بطاقة الباركود أصغر شوي عشان الشاشة تدخل بدون تمرير */
+.q-m-lobby .q-m-pass { width: min(60%, 232px, 28dvh); }
+.q-m-lobby .q-m-pass .q-room-code__char { font-size: clamp(1.3rem, 3.4dvh, 1.6rem); }
+@media (max-height: 740px) {
+  .q-m-lobby { gap: var(--q-space-2) !important; }
+  .q-m-lobby .q-m-pass { width: min(42%, 138px); }
+  .q-m-lobby .q-m-pass__qr { padding: 8px 8px 6px; }
+  .q-m-lobby .q-m-pass__code { padding: 6px 6px 8px; gap: var(--q-space-1); }
+  .q-m-lobby .q-m-pass .q-room-code__char { font-size: 1.2rem; }
+  .q-m-lobby .q-m-title--md { font-size: var(--q-fs-xl); }
+  .q-m-lobby .q-m-pass-share { margin-block-start: var(--q-space-1); }
+}
+
+/* العد التنازلي في الجوال: رقم الجولة نص بسيط بدون بوكس (مثل مشهد الغروب) */
+.q-m-count__round { position: relative; font-size: var(--q-fs-md); font-weight: var(--q-fw-black); color: var(--q-ink); }

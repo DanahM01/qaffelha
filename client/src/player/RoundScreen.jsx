@@ -3,6 +3,8 @@ import { socket } from "../socket.js";
 import { EyeIcon, LockIcon, ReactionSticker, REACTION_LABELS, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
 import { isSittingOut } from "./teamState.js";
+import TeamStrip from "../theme/TeamStrip.jsx";
+import SunsetTimer from "../theme/SunsetTimer.jsx";
 import LockBadge from "../cards/LockBadge.jsx";
 
 const MESSAGES = {
@@ -17,6 +19,7 @@ const TEAM_NAMES = { A: "الفريق الأول", B: "الفريق الثاني
 // Sticker reactions (EVENTS.md §7): only for players who are out or sitting out.
 const REACTIONS = ["laugh", "fire", "shock"];
 const REACTION_GAP_MS = 400;
+const ROUND_SECONDS = 20;
 
 function ReactionBar() {
   const [busy, setBusy] = useState(false);
@@ -71,8 +74,6 @@ export default function RoundScreen({
   const score = scores.get(meId) ?? state.me?.score ?? 0;
   const rank =
     1 + active.filter((player) => (scores.get(player.id) || 0) > score).length;
-  const timerClass =
-    seconds <= 5 ? "is-danger" : seconds <= 10 ? "is-warn" : "";
   const frozen = frozenSeconds > 0;
   const closed = disabled || seconds === 0 || out || frozen;
   // Freeze card (PB-16, SPEC §17.6): Team Mode only, during the battle, not in its last 3 seconds.
@@ -94,47 +95,20 @@ export default function RoundScreen({
   }
   return (
     <>
-      <div className={`q-timer q-m-round__top ${timerClass}`}>
-        <span className="q-round-label">الجولة {state.round}</span>
-        <span
-          className="q-timer__num"
-          role="timer"
-          aria-label={`باقي ${seconds} ثانية`}
-        >
-          {String(seconds).padStart(2, "0")}
-        </span>
-      </div>
+      {teams && <TeamStrip team={team} values={state.teamScores} />}
+      <SunsetTimer seconds={seconds} total={ROUND_SECONDS} round={state.round} />
       <h1 className="q-category">{state.category?.title}</h1>
-      {teams && <LockBadge lockedBy={state.chosen?.lockedBy ?? state.lockedBy} />}
-      <div
-        className={`q-timer ${timerClass}`}
-        style={{ "--q-progress": Math.min(seconds, 20) / 20 }}
-        aria-hidden="true"
-      >
-        <div className="q-timer__track">
-          <div className="q-timer__fill" />
+      {teams && (
+        <div className="q-m-lockstamp">
+          <LockBadge lockedBy={state.chosen?.lockedBy ?? state.lockedBy} />
         </div>
-      </div>
-      <div className="q-m-me">
-        <span>
-          نقاطي<b className="q-ltr">{score}</b>
-        </span>
-        <span>
-          {out ? "باقين" : "ترتيبي"}
-          <b className="q-ltr">
-            {out ? active.length : `${rank}/${active.length}`}
-          </b>
-        </span>
-      </div>
+      )}
       <div className="q-m-wall">
-        <span className="q-m-section-label">
-          انقفلت <b>{state.locked?.length || 0}</b>
-        </span>
         <div
           className="q-m-wall__list"
           aria-live="polite"
           aria-relevant="additions"
-          aria-label="الكلمات المقفولة"
+          aria-label={`الكلمات المقفولة: ${state.locked?.length || 0}`}
         >
           {!state.locked?.length && (
             <span className="q-m-wall__empty">
@@ -184,25 +158,32 @@ export default function RoundScreen({
             </div>
           )}
         </div>
-                {canReact && <ReactionBar />}
-        {teams && (
-            <div className="q-card-play">
-              <button
-                type="button"
-                className="q-btn q-btn--sm q-card-btn q-card-btn--freeze"
-                disabled={!canFreeze}
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => onCard("freeze")}
-                aria-label="بطاقة التجميد: تجمّد أقوى لاعب في الخصم 3 ثواني"
-              >
-                <SnowflakeIcon />
-                تجميد
-                <span className="q-card-btn__left">
-                  {freezeLeft > 0 ? "×1" : "انلعبت"}
-                </span>
-              </button>
-            </div>
+        <div className="q-m-stats">
+          <span>
+            نقاطي<b>{score}</b>
+          </span>
+          <span>
+            {out ? "باقين" : "ترتيبي"}
+            <b>{out ? active.length : `${rank}/${active.length}`}</b>
+          </span>
+          {teams && (
+            <button
+              type="button"
+              className="q-btn q-btn--sm q-card-btn q-card-btn--freeze q-m-stats__card"
+              disabled={!canFreeze}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => onCard("freeze")}
+              aria-label="بطاقة التجميد: تجمّد أقوى لاعب في الخصم 3 ثواني"
+            >
+              <SnowflakeIcon />
+              تجميد
+              <span className="q-card-btn__left">
+                {freezeLeft > 0 ? "×1" : "انلعبت"}
+              </span>
+            </button>
           )}
+        </div>
+        {canReact && <ReactionBar />}
         {out ? (
           <p className="q-spectate">
             <EyeIcon />

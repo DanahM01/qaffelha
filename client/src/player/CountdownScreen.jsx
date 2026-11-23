@@ -10,7 +10,7 @@ export default function CountdownScreen({ state, offset }) {
     >
       <div className="q-m-hero">
         <div className="q-m-sun" />
-        <span className="q-round-label">الجولة {state.round}</span>
+        <span className="q-m-count__round">الجولة {state.round}</span>
         <span
           key={seconds}
           className="q-m-count__n"
