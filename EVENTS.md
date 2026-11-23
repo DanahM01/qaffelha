@@ -110,14 +110,14 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
 | `team:set` | C→S | host | `{ code, playerId, team }` → `{ ok }` or `{ ok: false, error }` | Lobby only. Move a player. Errors `NOT_HOST`, `STARTED`, `NOT_FOUND` |
 | `team:shuffle` | C→S | host | `{ code }` → `{ ok }` or `{ ok: false, error }` | Lobby only. Errors `NOT_HOST`, `STARTED`. Random balanced split. Server then sends `room:players` |
 | `board:update` | S→C | server | `{ board: [{ id, category: { id, title }, owner }], teamPoints: { A, B }, cards: { A: {freeze,lock,mine,steal}, B: {…} } }` | Full board after start and after every change. Mines are **not** in this payload |
-| `board:mines` | S→C | server (to one team only) | `{ mines: [squareId] }` | Your team's hidden mines. Sent only to sockets of that team |
+| `board:mines` | S→C | server (to one team only) | `{ mines: [squareId] }` | Your team's hidden mines. Sent only to the connected sockets of the Mine owner team, **never** to the rival team or the big screen. Sent after a Mine is placed and after it is removed (exploded or cleared). Offline players get it through `room:rejoin` |
 | `turn:start` | S→C | server | `{ team, endsAt }` | Turn team chooses a square before `endsAt` (15 s) or the server picks |
 | `square:choose` | C→S | player | `{ code, squareId, steal? }` → `{ ok }` or `{ ok: false, error }` | Errors `NOT_YOUR_TURN`, `TAKEN`, `NO_CARD` (steal), `BAD_TARGET`, `SITTING_OUT`, `NOT_ALLOWED` (Steal card chooser permission/finality) |
 | `battle:chosen` | S→C | server | `{ squareId, team, steal, cardWindowEndsAt }` | Square chosen; 5 s card window, then `round:countdown` |
 | `card:play` | C→S | player | `{ code, card: 'freeze' \| 'lock' \| 'mine' \| 'steal', target? }` → `{ ok }` or `{ ok: false, error }` | Errors `NO_CARD`, `NOT_NOW`, `NOT_ALLOWED`, `BAD_TARGET`. `steal` is played through `square:choose` |
-| `card:played` | S→C | server | `{ team, card, by: { id, name }, target? }` | Announce a card. For `mine`, sent **without** `target` to the other team |
+| `card:played` | S→C | server | `{ team, card, by: { id, name }, target? }` | Announce a card. For `mine` there is **no `target` field for anyone** (both teams and the big screen); the owner team learns the square only from `board:mines` |
 | `player:frozen` | S→C | server | `{ id, until }` | Freeze card hit this player until `until` (server ms) |
-| `mine:exploded` | S→C | server | `{ squareId, team, points: -3 }` | The team that lost on a mined square lost 3 team points |
+| `mine:exploded` | S→C | server | `{ squareId, team, points: -3 }` | Sent to everyone when the rival team loses the battle on a mined square: `team` (the rival) lost 3 team points. Order: `battle:end` → `mine:exploded` → `board:update` (with the reduced `teamPoints`). Not sent when the rival wins there or on a draw |
 | `team:sitout` | S→C | server | `{ A: playerId \| null, B: playerId \| null }` | Sent before every battle |
 | `battle:end` | S→C | server | `{ squareId, winnerTeam: 'A' \| 'B' \| null, teamScores: { A, B }, scores: [{ id, name, team, score }] }` | Replaces `round:end` in teams mode. Next: `turn:start` after 4 s, or `game:over` |
 
@@ -128,7 +128,7 @@ Rules: [`docs/SPEC.md`](docs/SPEC.md) §17. Owner of the contract: **Layan**. Ev
   status: 'lobby' | 'turn' | 'cardWindow' | 'countdown' | 'round' | 'battleEnd' | 'over',
   players: [{ id, name, out, connected, team }],
   board: [{ id, category: { id, title }, owner }],
-  mines: [squareId],              // only my team's
+  mines: [squareId],              // only my own team's remaining mines; [] for the rival team and the big screen
   turn: { team, endsAt } | null,
   chosen: { squareId, team, steal, lockedBy } | null,
   cardWindowEndsAt: number | null, // restore the existing card window without starting a new one
@@ -178,10 +178,32 @@ PB-14/PB-19 engine integration:
   still needs `cardChoices` in rejoin snapshots once PB-20 is enabled.
 - PB-17 (Leena) and PB-18 (Renad): add their own card handlers and scoring effects.
   The selected battle is in `room.chosen`, with the existing `lockedBy` field; hidden
-  mines must stay out of `board:update`. Neither card is implemented by PB-14/PB-19.
+  mines must stay out of `board:update`. Neither card is implemented by PB-14/PB-19
+  (Mine is implemented by PB-18, below).
 - Renad/Reef: connect `board:update`, `turn:start`, `battle:chosen`, `battle:end` and
   `square:choose` in the owned host/phone screens, including Steal selection and notices.
   The server implementation does not change those UI files.
+
+PB-18 Mine card (Renad):
+- `card:play { code, card: 'mine', target: squareId }` works only during the own team's
+  turn (`turn`) or its own card window after choosing (`cardWindow`); otherwise `NOT_NOW`.
+  The target must be a free, unmined square on the board that is not the chosen square;
+  otherwise `BAD_TARGET`. The existing card permission rule applies (`NOT_ALLOWED`,
+  `NO_CARD`), and a successful Mine records `cardChoices[team]`, like Steal.
+- On success, in this order: `card:played { team, card: 'mine', by }` to everyone with
+  **no `target` field**; `board:mines` to the owner team's sockets only; `board:update`
+  (the team's `mine` count goes down; mines are never in this payload).
+- After every battle the mine on the battled square is settled before `board:update` and
+  before the PB-15 resolver, so both see the final team points:
+  - The rival team loses there: `battle:end` → `mine:exploded { squareId, team, points: -3 }`
+    to everyone → `board:update` with that team's `teamPoints` 3 lower (may go negative).
+    The owner team then gets its updated `board:mines`.
+  - The rival team wins there: the mine is removed silently. No `mine:exploded`, no
+    point change; the owner team gets its updated `board:mines`.
+  - A draw (`winnerTeam: null`): the mine stays and nothing extra is sent.
+- On `room:rejoin`, `state.mines` lists only the requesting player's own team's remaining
+  mines; it is `[]` for the rival team and the big screen.
+- Product Owner to confirm: a draw keeps the mine, and the chosen square cannot be mined.
 
 ### 6.4 Who listens to what (teams mode)
 | Event | Big screen | Phone |

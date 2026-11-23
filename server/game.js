@@ -374,3 +374,45 @@ export function restartTeamRoom(room) {
     cards: { A: newTeamCards(), B: newTeamCards() }, teamPoints: { A: 0, B: 0 },
     sitout: { A: null, B: null }, cardChoices: {} };
 }
+
+// PB-18 Mine card (Renad). A hidden mine on a free square: if the rival team loses the battle
+// there it loses MINE_PENALTY team points; if the rival wins there the mine is removed silently.
+export const MINE_PENALTY = 3;
+
+// Own team's turn only: before choosing (`turn`) or after it (`cardWindow`). Not the chosen square.
+export function playMine(room, playerId, squareId, now) {
+  const error = cardPlayError(room, playerId, 'mine');
+  if (error) return { error };
+  const player = room.players.get(playerId);
+  const team = player.team;
+  const ownTurn = room.status === 'turn' && room.turn?.team === team && now < room.turn.endsAt;
+  const ownWindow = room.status === 'cardWindow' && room.chosen?.team === team && now < room.cardWindowEndsAt;
+  if (!ownTurn && !ownWindow) return { error: 'NOT_NOW' };
+  // PB-20: a sitting-out chooser's card choice is final, as for Steal in chooseSquare.
+  if (room.sitout?.[team] && room.cardChoices?.[team]) return { error: 'NOT_ALLOWED' };
+  const square = Number.isInteger(squareId) ? room.board.find(entry => entry.id === squareId) : null;
+  if (!square || square.owner || square.mine || square.id === room.chosen?.squareId) return { error: 'BAD_TARGET' };
+  return { room: { ...room,
+    board: room.board.map(entry => entry.id === square.id ? { ...entry, mine: team } : entry),
+    cards: { ...room.cards, [team]: { ...room.cards[team], mine: room.cards[team].mine - 1 } },
+    cardChoices: { ...room.cardChoices, [team]: 'mine' } },
+    team, by: { id: player.id, name: player.name } };
+}
+
+// The squares a team has mined; only that team may see them (board:mines).
+export function teamMines(room, team) {
+  return (room.board ?? []).filter(square => square.mine === team).map(square => square.id);
+}
+
+// Runs after finishTeamBattle, on the battled square. `owner` tells the caller whose mine list changed.
+// A draw (no winner) keeps the mine for now; the Product Owner still has to confirm that case.
+export function settleMine(room, winnerTeam) {
+  const square = room.board?.find(entry => entry.id === room.chosen?.squareId);
+  if (!square?.mine || !winnerTeam) return { room };
+  const owner = square.mine;
+  const board = room.board.map(entry => entry.id === square.id ? { ...entry, mine: null } : entry);
+  if (winnerTeam !== owner) return { room: { ...room, board }, owner };
+  const rival = otherTeam(owner);
+  return { room: { ...room, board, teamPoints: { ...room.teamPoints, [rival]: room.teamPoints[rival] - MINE_PENALTY } },
+    owner, exploded: { squareId: square.id, team: rival, points: -MINE_PENALTY } };
+}

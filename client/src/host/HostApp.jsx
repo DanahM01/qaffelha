@@ -10,6 +10,7 @@ import RoundEnd from './RoundEnd.jsx';
 import Results from './Results.jsx';
 import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
 import { restoreHostSnapshot } from './restoreHostSnapshot.js';
+import MineNotice from './MineNotice.jsx';
 
 // Event names from EVENTS.md §1.
 const ROOM_CREATE = 'room:create';
@@ -29,6 +30,8 @@ const TEAM_SHUFFLE = 'team:shuffle';
 // Team Mode cards (EVENTS.md §6). Freeze: PB-16 (Danah).
 const CARD_PLAYED = 'card:played';
 const PLAYER_FROZEN = 'player:frozen';
+// PB-18 Mine (Renad). board:mines is never sent to the big screen, so it is not listened to here.
+const MINE_EXPLODED = 'mine:exploded';
 const NOTICE_MS = 3000;
 
 const STORE_KEY = 'qaffelha';
@@ -123,6 +126,7 @@ export default function HostApp() {
   const [teamError, setTeamError] = useState(false);
   const [cardNotice, setCardNotice] = useState(null); // last card:played, shown for 3 s
   const [frozenIds, setFrozenIds] = useState([]); // players frozen right now (player:frozen)
+  const [mineNotice, setMineNotice] = useState(null); // PB-18: Mine played / exploded, shown for 3 s
   const timers = useRef(new Set());
   const playersRef = useRef([]);
   playersRef.current = players;
@@ -180,6 +184,16 @@ export default function HostApp() {
     setCardNotice(notice);
     later(() => setCardNotice((current) => (current === notice ? null : current)), NOTICE_MS);
   };
+  // PB-18: copy only the team, player and points, so a square id can never reach the screen.
+  const showMineNotice = (fields) => {
+    const notice = { ...fields, sequence: Date.now() };
+    setMineNotice(notice);
+    later(() => setMineNotice((current) => (current === notice ? null : current)), NOTICE_MS);
+  };
+  const showMinePlayed = (payload) => {
+    if (payload.card === 'mine') showMineNotice({ kind: 'played', team: payload.team, by: { name: payload.by.name } });
+  };
+  const showMineExploded = (payload) => showMineNotice({ kind: 'exploded', team: payload.team, points: payload.points });
   const freezePlayer = (payload) => {
     setFrozenIds((ids) => [...ids.filter((id) => id !== payload.id), payload.id]);
     later(() => setFrozenIds((ids) => ids.filter((id) => id !== payload.id)),
@@ -199,6 +213,8 @@ export default function HostApp() {
         onRoundStart: startRound,
         onLocked: addLocked,
         onScores: updateScores,
+        onCardPlayed: (payload) => { showCard(payload); showMinePlayed(payload); },
+        onMineExploded: showMineExploded,
       });
       return () => fakeRoom.current.stop();
     }
@@ -216,6 +232,8 @@ export default function HostApp() {
     socket.on(GAME_OVER, endGame);
     socket.on(CARD_PLAYED, showCard);
     socket.on(PLAYER_FROZEN, freezePlayer);
+    socket.on(CARD_PLAYED, showMinePlayed);
+    socket.on(MINE_EXPLODED, showMineExploded);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -251,6 +269,8 @@ export default function HostApp() {
       socket.off(GAME_OVER, endGame);
       socket.off(CARD_PLAYED, showCard);
       socket.off(PLAYER_FROZEN, freezePlayer);
+      socket.off(CARD_PLAYED, showMinePlayed);
+      socket.off(MINE_EXPLODED, showMineExploded);
     };
   }, [fake, attempt, navigate]);
 
@@ -381,6 +401,7 @@ export default function HostApp() {
           </div>
         </div>
       )}
+      <MineNotice notice={mineNotice} />
     </div>
   );
 }
