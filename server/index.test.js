@@ -597,3 +597,30 @@ test('PB-14 PB-20 adapter assigns only after settlement, before the next card wi
   assert.equal(players[0].request('answer:submit', { code, text: 'موز' }).result, 'closed');
   h.dispose();
 });
+
+test('sticker reactions: only out or sitting-out players, three stickers, rate limited, broadcast to the room', () => {
+  const h = harness();
+  const { host, code, players } = h.lobby('screen');
+  const [p0, p1, p2] = players;
+  assert.deepEqual(p1.request('reaction:send', { reaction: 'laugh' }), { ok: false, error: 'NOT_ALLOWED' });
+  host.request('game:start', { code });
+  h.advance(3000);
+  p0.request('answer:submit', { code, text: 'موز' });
+  p1.request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(host.latest('round:end').eliminated.id, p1.data.playerId);
+  assert.deepEqual(p0.request('reaction:send', { reaction: 'laugh' }), { ok: false, error: 'NOT_ALLOWED' });
+  assert.deepEqual(p1.request('reaction:send', { reaction: 'heart' }), { ok: false, error: 'NOT_ALLOWED' });
+  assert.deepEqual(p1.request('reaction:send', { reaction: 'fire' }), { ok: true });
+  assert.deepEqual(host.latest('reaction:show'), { reaction: 'fire', by: { id: p1.data.playerId, name: 'لاعب 1', team: null } });
+  assert.deepEqual(p1.request('reaction:send', { reaction: 'shock' }), { ok: false, error: 'TOO_FAST' });
+  h.advance(400);
+  assert.deepEqual(p1.request('reaction:send', { reaction: 'shock' }), { ok: true });
+  // A team player who sits out may react too.
+  h.rooms.get(code).sitout = { A: p2.data.playerId, B: null };
+  assert.deepEqual(p2.request('reaction:send', { reaction: 'laugh' }), { ok: true });
+  const outsider = h.connect();
+  assert.deepEqual(outsider.request('reaction:send', { reaction: 'laugh' }), { ok: false, error: 'NOT_ALLOWED' });
+  assert.doesNotThrow(() => outsider.emit('reaction:send', null));
+  h.dispose();
+});

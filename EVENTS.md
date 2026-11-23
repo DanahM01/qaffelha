@@ -218,3 +218,12 @@ PB-18 Mine card (Renad):
 | `battle:end` | Square fills with team color, both scores | «فريقك أخذ المربع!» / «الخصم أخذ المربع» |
 | `mine:exploded` | Explosion on the square, −3 | Toast |
 | `game:over` | Winning line + winner team + Play Again | «فاز فريقك!» / «خسر فريقك» |
+
+
+## 7. Sticker reactions
+| Event | Who sends | Payload | Ack / broadcast |
+|---|---|---|---|
+| `reaction:send` | Phone, only a player who is out or sitting out | `{ reaction }`, one of `laugh` `fire` `shock` | Ack `{ ok: true }`, or `{ ok: false, error: 'NOT_ALLOWED' \| 'TOO_FAST' }` (one per 400 ms) |
+| `reaction:show` | Server → room | `{ reaction, by: { id, name, team } }` | Big-screen rooms: the big screen floats the sticker (theme/Logo.jsx `ReactionSticker`) up with the name. Phones-only rooms: every phone floats it |
+
+The phone shows the three sticker buttons in both room modes.
