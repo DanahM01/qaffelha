@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { EyeIcon, LockIcon, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
+import { isSittingOut } from "./teamState.js";
 import LockBadge from "../cards/LockBadge.jsx";
 
 const MESSAGES = {
@@ -32,7 +33,9 @@ export default function RoundScreen({
     (state.scores || []).map((entry) => [entry.id, entry.score]),
   );
   const me = state.players.find((player) => player.id === meId);
-  const out = me?.out || state.me?.out;
+  const sittingOut = state.gameMode === "teams" && isSittingOut(state, meId);
+  const out =
+    state.gameMode === "teams" ? sittingOut : me?.out || state.me?.out;
   const active = state.players.filter((player) => !player.out);
   const score = scores.get(meId) ?? state.me?.score ?? 0;
   const rank =
@@ -45,10 +48,10 @@ export default function RoundScreen({
   const team = me?.team ?? state.me?.team ?? null;
   const teams = state.gameMode === "teams" && Boolean(team);
   const freezeLeft = state.cards?.[team]?.freeze ?? 1;
-  const sittingOut = state.sitout?.[team] ?? null;
-  const mayPlayCard = !sittingOut || sittingOut === meId;
+  const chooserId = state.sitout?.[team] ?? null;
+  const mayPlayCard = !chooserId || chooserId === meId;
   const canFreeze =
-    teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && seconds > 3;
+    teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && !state.cardChoices?.[team] && seconds > 3;
 
   function submit(event) {
     event.preventDefault();
@@ -149,14 +152,7 @@ export default function RoundScreen({
             </div>
           )}
         </div>
-        {out ? (
-          <p className="q-spectate">
-            <EyeIcon />
-            طلعت من اللعبة — تتفرج
-          </p>
-        ) : (
-          <>
-          {teams && (
+        {teams && (
             <div className="q-card-play">
               <button
                 type="button"
@@ -174,6 +170,16 @@ export default function RoundScreen({
               </button>
             </div>
           )}
+        {out ? (
+          <p className="q-spectate">
+            <EyeIcon />
+            {sittingOut
+              ? "ترتاح هالجولة — تتابع وتختار بطاقة فريقك"
+              : "طلعت من اللعبة — تتفرج"}
+          </p>
+        ) : (
+          <>
+
           <div className="q-frozen-wrap">
           {frozen && (
             <div className="q-frozen" role="alert">

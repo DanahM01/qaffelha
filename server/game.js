@@ -233,6 +233,7 @@ export function rejoinSnapshot(room, playerId, now) {
     Object.fromEntries(['freeze', 'lock', 'mine', 'steal'].map(card => [card, room.cards?.[id]?.[card] ?? 0]))]));
   state.teamPoints = { A: room.teamPoints?.A ?? 0, B: room.teamPoints?.B ?? 0 };
   state.sitout = sitout;
+  state.cardChoices = { A: room.cardChoices?.A ?? null, B: room.cardChoices?.B ?? null };
   state.frozenUntil = player?.frozenUntil > now ? player.frozenUntil : null;
   state.me = player ? { id: player.id, team, out: player.out, score: player.score,
     sittingOut: team !== null && sitout[team] === player.id } : null;
@@ -403,6 +404,95 @@ export function restartTeamRoom(room) {
     sitout: { A: null, B: null }, cardChoices: {} };
 }
 
+// Reef / PB-15. Board identity is square.id, not array order.
+function validTeamBoard(board) {
+  return Array.isArray(board) && board.length === 16 &&
+    new Set(board.map((square) => square?.id)).size === 16 &&
+    board.every((square) => Number.isInteger(square?.id) && square.id >= 0 && square.id < 16 &&
+      [null, 'A', 'B'].includes(square.owner));
+}
+
+export function findWinningLine(board) {
+  if (!validTeamBoard(board)) return null;
+  const owners = new Map(board.map(({ id, owner }) => [id, owner]));
+  const lines = Array.from({ length: 4 }, (_, row) => Array.from({ length: 4 }, (_, col) => row * 4 + col))
+    .concat(Array.from({ length: 4 }, (_, col) => Array.from({ length: 4 }, (_, row) => row * 4 + col)));
+  for (const line of lines) {
+    const team = owners.get(line[0]);
+    if (team && line.every((id) => owners.get(id) === team)) return { team, line };
+  }
+  return null;
+}
+
+export function teamGameResult(board, teamPoints = { A: 0, B: 0 }, cards = {}) {
+  if (!validTeamBoard(board)) return null;
+  const squares = { A: 0, B: 0 };
+  for (const square of board) if (square.owner) squares[square.owner]++;
+  const points = { A: teamPoints.A ?? 0, B: teamPoints.B ?? 0 };
+  const winning = findWinningLine(board);
+  if (winning) return { winnerTeam: winning.team, line: winning.line, squares, teamPoints: points };
+  if (board.some((square) => square.owner === null)) return null;
+  // A full board is not final while either team can still steal an opposing square.
+  if ((cards.A?.steal > 0 && squares.B > 0) || (cards.B?.steal > 0 && squares.A > 0)) return null;
+  const difference = squares.A - squares.B || points.A - points.B;
+  return { winnerTeam: difference > 0 ? 'A' : difference < 0 ? 'B' : null,
+    line: null, squares, teamPoints: points };
+}
+
+// Reef / PB-20. Previous sitting-out players return next battle and are not
+// ranked as zero-point participants in the battle they did not play.
+export function selectTeamSitouts(players, joinOrder, previous = {}) {
+  const result = { A: null, B: null };
+  const allPlayers = [...players];
+  for (const team of ['A', 'B']) {
+    const members = allPlayers.filter((player) => player.team === team);
+    if (members.length <= 2) continue;
+    const eligible = members.filter((player) => player.id !== previous[team]);
+    eligible.sort((a, b) => a.score - b.score ||
+      (b.lastCorrectAt ?? Infinity) - (a.lastCorrectAt ?? Infinity) ||
+      joinOrder.indexOf(b.id) - joinOrder.indexOf(a.id));
+    result[team] = eligible[0]?.id ?? null;
+  }
+  return result;
+}
+
+export function prepareTeamSitouts(room) {
+  return { ...room, sitout: selectTeamSitouts(room.players.values(), room.joinOrder, room.sitout), cardChoices: {} };
+}
+
+export function teamCardPermission(room, playerId) {
+  const player = room.players.get(playerId);
+  if (room.gameMode !== 'teams' || !player?.connected || !['A', 'B'].includes(player.team)) return 'NOT_ALLOWED';
+  const chooser = room.sitout?.[player.team];
+  if (chooser && chooser !== playerId) return 'NOT_ALLOWED';
+  if (chooser && room.cardChoices?.[player.team]) return 'NOT_ALLOWED';
+  return null;
+}
+
+// Call only after the owning card's phase/target/effect validation succeeds.
+// This records PB-20 finality; the card owner still applies and consumes it.
+export function recordTeamCardChoice(room, playerId, card) {
+  const error = teamCardPermission(room, playerId);
+  if (error) return { room, error };
+  const team = room.players.get(playerId).team;
+  if (!['freeze', 'lock', 'mine', 'steal'].includes(card)) return { room, error: 'BAD_TARGET' };
+  if (!(room.cards?.[team]?.[card] > 0)) return { room, error: 'NO_CARD' };
+  return { room: { ...room, cardChoices: { ...room.cardChoices, [team]: card } }, error: null };
+}
+
+export function submitTeamAnswer(room, playerId, text, now) {
+  const player = room.players.get(playerId);
+  if (room.gameMode === 'teams' && player && room.sitout?.[player.team] === playerId) {
+    return { room, word: null, ack: { result: 'closed', delta: 0, score: player.score } };
+  }
+  return room.gameMode === 'teams' ? submitBoardAnswer(room, playerId, text, now) : submitAnswer(room, playerId, text, now);
+}
+
+// Reef / PB-20: enforce chooser finality around Danah's unchanged Freeze rule.
+export function playTeamFreeze(room, playerId, now, randomValue) {
+  const choice = recordTeamCardChoice(room, playerId, 'freeze');
+  if (choice.error) return { error: choice.error };
+  return playFreeze(choice.room, playerId, now, randomValue);}
 // PB-18 Mine card (Renad). A hidden mine on a free square: if the rival team loses the battle
 // there it loses MINE_PENALTY team points; if the rival wins there the mine is removed silently.
 export const MINE_PENALTY = 3;

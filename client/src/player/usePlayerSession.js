@@ -1,6 +1,7 @@
 // Owner: Reef. Only sends documented intents; game decisions belong to the server.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { socket } from "../socket.js";
+import { TEAM_EVENTS, applyTeamEvent, myTeam } from "./teamState.js";
 import { createSessionRecovery } from "../sessionRecovery.js";
 
 const CREATE = "room:create";
@@ -15,6 +16,8 @@ const SCORES = "score:update";
 const ROUND_END = "round:end";
 const OVER = "game:over";
 const RESTART = "game:restart";
+const CHOOSE = "square:choose";
+
 const CARD = "card:play";
 const CARD_PLAYED = "card:played";
 const FROZEN = "player:frozen";
@@ -142,6 +145,7 @@ export default function usePlayerSession(navigate) {
         status: "round",
         frozenUntil: null,
         locked: [],
+        teamScores: { A: 0, B: 0 },
         scores: current.players.map(({ id }) => ({ id, score: 0 })),
       }));
     };
@@ -242,6 +246,21 @@ export default function usePlayerSession(navigate) {
     socket.on(SCORES, scores);
     socket.on(ROUND_END, roundEnd);
     socket.on(OVER, over);
+    const teamListeners = Object.values(TEAM_EVENTS).map((event) => {
+      const listener = (payload) => {
+        if (
+          event === TEAM_EVENTS.end ||
+          event === TEAM_EVENTS.turn ||
+          event === TEAM_EVENTS.chosen
+        ) {
+          roundRef.current = null;
+          setFeedback(null);
+        }
+        setState((current) => applyTeamEvent(current, event, payload));
+      };
+      socket.on(event, listener);
+      return [event, listener];
+    });
     socket.on(CARD_PLAYED, cardPlayed);
     socket.on(FROZEN, frozen);
     socket.on(BOARD, board);
@@ -264,6 +283,7 @@ export default function usePlayerSession(navigate) {
       socket.off(SCORES, scores);
       socket.off(ROUND_END, roundEnd);
       socket.off(OVER, over);
+      teamListeners.forEach(([event, listener]) => socket.off(event, listener));
       socket.off(CARD_PLAYED, cardPlayed);
       socket.off(FROZEN, frozen);
       socket.off(BOARD, board);
@@ -354,7 +374,7 @@ export default function usePlayerSession(navigate) {
     // Scores are rendered from score:update. An older acknowledgement must not overwrite a newer broadcast.
   }
 
-  async function playCard(card) {
+  async function playCard(card, target) {
     if (pending.current || !identityRef.current) return;
     pending.current = true;
     setBusy(true);
@@ -372,6 +392,11 @@ export default function usePlayerSession(navigate) {
           ? ERRORS[response.error] || "ما قدرنا نلعب البطاقة"
           : "ما وصلنا رد. حاول مرة ثانية.",
       );
+    if (response?.ok) setState((current) => {
+      const team = myTeam(current, identityRef.current.playerId);
+      return current.sitout?.[team] ? { ...current, cardChoices: { ...current.cardChoices, [team]: card } } : current;
+    });
+    return Boolean(response?.ok);
   }
 
   async function restart() {
@@ -398,8 +423,59 @@ export default function usePlayerSession(navigate) {
       eliminated: null,
       winner: null,
       ranking: [],
+      winnerTeam: undefined,
+      line: null,
+      board: [],
+      turn: null,
+      chosen: null,
+      sitout: { A: null, B: null },
+      cardChoices: {},
+      teamScores: { A: 0, B: 0 },
     }));
   }
+
+  async function chooseSquare(squareId, options = {}) {
+    if (pending.current || !socket.connected) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    const turnEndsAt = state.turn?.endsAt;
+    const response = await request(CHOOSE, {
+      code: identityRef.current.code,
+      squareId,
+      ...(options.steal ? { steal: true } : {}),
+    });
+    pending.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    if (!response?.ok) {
+      const messages = {
+        NOT_YOUR_TURN: "مو دور فريقك",
+        TAKEN: "المربع مأخوذ",
+        NO_CARD: "بطاقة السرقة مستخدمة",
+        BAD_TARGET: "اختار مربع متاح",
+        SITTING_OUT: "أنت تختار بطاقة فريقك هالجولة",
+      };
+      setError(
+        response
+          ? messages[response.error] || "ما قدرنا نختار المربع"
+          : "ما وصلنا رد. حاول مرة ثانية.",
+      );
+    }
+    if (response?.ok && options.steal)
+      setState((current) => {
+        if (current.turn?.endsAt !== turnEndsAt) return current;
+        const team = myTeam(current, identityRef.current.playerId);
+        return current.sitout?.[team]
+          ? {
+              ...current,
+              cardChoices: { ...current.cardChoices, [team]: "steal" },
+            }
+          : current;
+      });
+    return Boolean(response?.ok);
+  }
+
 
   return {
     identity,
@@ -417,6 +493,7 @@ export default function usePlayerSession(navigate) {
     playCard,
     cardNotice,
     restart,
+    chooseSquare,
     retry: () => reconnectAction.current?.(),
   };
 }

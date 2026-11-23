@@ -2328,6 +2328,39 @@ body {
   :root { --q-player-max: 600px; }
 }
 
+/* Reef / PB-15: Team Mode phone board. Uses the approved semantic team colors. */
+.q-team-screen { gap: var(--q-space-1); padding: var(--q-space-3) var(--q-space-3) calc(var(--q-space-3) + env(safe-area-inset-bottom)); }
+.q-team-heading { font-size: var(--q-fs-xl); font-weight: var(--q-fw-black); line-height: 1.2; }
+.q-team-deadline { color: var(--q-primary); font-size: var(--q-fs-sm); }
+.q-team-deadline b { font-family: var(--q-font-led); }
+.q-team-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--q-space-1); width: 100%; direction: ltr; }
+.q-team-board .q-team-board__tile { display: flex; flex-direction: column; gap: var(--q-space-1); min-width: 0; min-height: 72px; padding: var(--q-space-1); border-width: var(--q-line-thin); border-radius: var(--q-radius-sm); background: var(--q-board-tile); color: var(--q-ink); box-shadow: none; font-size: var(--q-fs-xs); line-height: 1.2; }
+.q-team-board__title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
+.q-team-board__owner { font-size: 0.75em; font-weight: var(--q-fw-bold); }
+.q-team-board .q-team-board__tile.is-team-a { background: var(--q-team-a); color: var(--q-team-a-ink); }
+.q-team-board .q-team-board__tile.is-team-b { background: var(--q-team-b); color: var(--q-team-b-ink); }
+.q-team-board .q-team-board__tile:disabled { border-style: solid; border-color: var(--q-border); cursor: default; transform: none; }
+.q-team-board .q-team-board__tile.is-winning { outline: var(--q-line) solid var(--q-primary); outline-offset: -6px; }
+.q-team-board .q-team-board__tile.is-chosen { border-style: dashed; border-color: var(--q-primary); }
+.q-team-screen .q-winner { padding: var(--q-space-3); gap: var(--q-space-1); }
+.q-team-screen .q-winner__crown { width: 36px; height: 28px; }
+.q-team-screen .q-m-me > span { white-space: normal; padding-inline: var(--q-space-2); }
+
+/* Reef / PB-20: the sitting-out player's card controls. */
+.q-team-cards { display: grid; gap: var(--q-space-1); min-width: 0; }
+.q-team-cards__heading { color: var(--q-text); font-weight: var(--q-fw-heavy); font-size: var(--q-fs-sm); }
+.q-team-cards__buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--q-space-1); }
+.q-team-cards__buttons .q-btn { min-height: 48px; min-width: 0; padding-inline: var(--q-space-1); gap: var(--q-space-1); font-size: var(--q-fs-xs); border-width: var(--q-line-thin); }
+.q-team-cards .q-muted { font-size: var(--q-fs-xs); }
+.q-team-round { gap: var(--q-space-1); }
+.q-team-round .q-category { font-size: clamp(1.75rem, 8vw, 2.5rem); }
+@container (max-height: 480px) {
+  .q-team-round .q-team-points, .q-team-round .q-team-cards__heading { display: none; }
+  .q-team-round .q-category { font-size: var(--q-fs-xl); }
+  .q-team-round .q-timer__num { font-size: var(--q-fs-lg); }
+  .q-team-round .q-m-me > span { padding: 0.15em 0.4em; font-size: var(--q-fs-xs); }
+}
+
 /* ===== Sprint 2 — بطاقة التجميد (PB-16، دانة) ===== */
 /* زر البطاقة على الجوال: فوق خانة الكتابة */
 .q-card-play { display: flex; justify-content: flex-start; margin-bottom: var(--q-space-2); }
