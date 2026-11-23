@@ -12,6 +12,7 @@ import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, pr
   TEAM_LIMITS, assignTeams, beginTeamGame, beginTeamTurn, chooseSquare, automaticSquare,
   boardPayload, teamScores, submitBoardAnswer, finishTeamBattle, restartTeamRoom } from './game.js';
 import { playMine, teamMines, settleMine } from './game.js'; // PB-18 Mine card (Renad)
+import { playLock } from './game.js'; // PB-17 Lock card (Leena)
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -384,7 +385,17 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
         log(`room ${room.code} card mine`);
         return;
       }
-      // lock, mine and steal are added by their own stories (SPEC §17.6).
+      if (input.card === 'lock') {
+        const result = playLock(room, player.id, now(), input.target);
+        if (result.error) return ack({ ok: false, error: result.error });
+        rooms.set(room.code, result.room);
+        ack({ ok: true });
+        emit(result.room, EVENTS.cardPlayed, { team: result.team, card: 'lock', by: result.by, target: result.target });
+        publishBoard(result.room);
+        log(`room ${room.code} card lock`);
+        return;
+      }
+      // Steal is sent through square:choose, not card:play (EVENTS.md §6).
       ack({ ok: false, error: 'NO_CARD' });
     });
     handle(EVENTS.restart, (input, ack) => {

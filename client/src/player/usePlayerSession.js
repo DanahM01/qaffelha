@@ -18,6 +18,11 @@ const RESTART = "game:restart";
 const CARD = "card:play";
 const CARD_PLAYED = "card:played";
 const FROZEN = "player:frozen";
+const BOARD = "board:update";
+const TURN = "turn:start";
+const CHOSEN = "battle:chosen";
+const BATTLE_END = "battle:end";
+const SITOUT = "team:sitout";
 const ERRORS = {
   NOT_FOUND: "الغرفة مو موجودة",
   NAME_TAKEN: "الاسم مأخوذ",
@@ -29,7 +34,7 @@ const ERRORS = {
   NOT_NOW: "مو وقت البطاقة الحين",
   NO_CARD: "فريقك استخدم البطاقة",
   NOT_ALLOWED: "البطاقة بيد اللي جالس من فريقك",
-  BAD_TARGET: "ما فيه أحد من الخصم تجمّده",
+  BAD_TARGET: "هدف البطاقة غير صالح",
 };
 const EMPTY = { status: "lobby", mode: null, hostId: null, players: [] };
 
@@ -187,6 +192,11 @@ export default function usePlayerSession(navigate) {
         const left = current.cards?.[payload.team]?.[payload.card];
         return {
           ...current,
+            ...(payload.card === "lock" ? {
+              chosen: current.chosen ? { ...current.chosen, lockedBy: payload.team } : null,
+              lockedBy: payload.team,
+              cardChoices: { ...current.cardChoices, [payload.team]: "lock" },
+            } : {}),
           cards: {
             ...current.cards,
             [payload.team]: {
@@ -203,6 +213,26 @@ export default function usePlayerSession(navigate) {
           ? { ...current, frozenUntil: payload.until }
           : current,
       );
+    // PB-17 consumes the existing PB-14 events; the board screen remains PB-15's component.
+    const board = (payload) => setState(current => ({ ...current, ...payload, gameMode: "teams" }));
+    const turn = (payload) => {
+      roundRef.current = null;
+      setCardNotice(null);
+      setState(current => ({ ...current, status: "turn", turn: payload,
+        chosen: null, lockedBy: null, cardWindowEndsAt: null, cardChoices: {} }));
+    };
+    const chosen = (payload) => {
+      roundRef.current = null;
+      setCardNotice(null);
+      setState(current => ({ ...current, status: "cardWindow", gameMode: "teams",
+        chosen: { ...payload, lockedBy: null }, cardWindowEndsAt: payload.cardWindowEndsAt }));
+    };
+    const battleEnd = (payload) => {
+      roundRef.current = null;
+      setState(current => ({ ...current, status: "battleEnd", battleResult: payload,
+        scores: payload.scores, teamScores: payload.teamScores }));
+    };
+    const sitout = (payload) => setState(current => ({ ...current, sitout: payload }));
     socket.on("connect", reconnect);
     socket.on("disconnect", disconnect);
     socket.on(PLAYERS, players);
@@ -214,6 +244,11 @@ export default function usePlayerSession(navigate) {
     socket.on(OVER, over);
     socket.on(CARD_PLAYED, cardPlayed);
     socket.on(FROZEN, frozen);
+    socket.on(BOARD, board);
+    socket.on(TURN, turn);
+    socket.on(CHOSEN, chosen);
+    socket.on(BATTLE_END, battleEnd);
+    socket.on(SITOUT, sitout);
     reconnectAction.current = reconnect;
     if (socket.connected) reconnect();
     return () => {
@@ -231,6 +266,11 @@ export default function usePlayerSession(navigate) {
       socket.off(OVER, over);
       socket.off(CARD_PLAYED, cardPlayed);
       socket.off(FROZEN, frozen);
+      socket.off(BOARD, board);
+      socket.off(TURN, turn);
+      socket.off(CHOSEN, chosen);
+      socket.off(BATTLE_END, battleEnd);
+      socket.off(SITOUT, sitout);
     };
   }, [navigate, request]);
 

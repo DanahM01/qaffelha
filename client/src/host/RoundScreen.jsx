@@ -4,6 +4,7 @@ import RoundTimer from './RoundTimer.jsx';
 import LockedWords from './LockedWords.jsx';
 import Scoreboard from './Scoreboard.jsx';
 import { SnowflakeIcon } from '../theme/Logo.jsx';
+import LockBadge from '../cards/LockBadge.jsx';
 
 const TEAM_NAMES = { A: 'الفريق الأول', B: 'الفريق الثاني' };
 
@@ -25,7 +26,7 @@ function useShortScreen() {
   return short;
 }
 
-export default function RoundScreen({ round, category, endsAt, clockOffset, locked, players, scores, cardNotice = null, frozenIds = [] }) {
+export default function RoundScreen({ round, category, endsAt, clockOffset, locked, players, scores, cardNotice = null, frozenIds = [], lockedBy = null }) {
   const short = useShortScreen();
 
   return (
@@ -48,6 +49,7 @@ export default function RoundScreen({ round, category, endsAt, clockOffset, lock
         <div className="q-host-round__main">
           <RoundTimer endsAt={endsAt} clockOffset={clockOffset} />
           <h1 className="q-category">{category.title}</h1>
+          <LockBadge lockedBy={lockedBy} host />
           <LockedWords locked={locked} />
         </div>
         <div className="q-side-board"><Scoreboard players={players} scores={scores} frozenIds={frozenIds} /></div>

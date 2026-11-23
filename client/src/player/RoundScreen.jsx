@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { EyeIcon, LockIcon, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
+import LockBadge from "../cards/LockBadge.jsx";
 
 const MESSAGES = {
   correct: "صح! قفّلتها عليهم",
@@ -69,6 +70,7 @@ export default function RoundScreen({
         </span>
       </div>
       <h1 className="q-category">{state.category?.title}</h1>
+      {teams && <LockBadge lockedBy={state.chosen?.lockedBy ?? state.lockedBy} />}
       <div
         className={`q-timer ${timerClass}`}
         style={{ "--q-progress": Math.min(seconds, 20) / 20 }}

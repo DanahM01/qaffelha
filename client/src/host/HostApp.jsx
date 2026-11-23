@@ -11,6 +11,8 @@ import Results from './Results.jsx';
 import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
 import { restoreHostSnapshot } from './restoreHostSnapshot.js';
 import MineNotice from './MineNotice.jsx';
+import LockCardWindow from '../cards/LockCardWindow.jsx';
+import LockNotice from '../cards/LockNotice.jsx';
 
 // Event names from EVENTS.md §1.
 const ROOM_CREATE = 'room:create';
@@ -27,6 +29,8 @@ const GAME_RESTART = 'game:restart';
 // Team Mode, EVENTS.md §6.2.
 const TEAM_SET = 'team:set';
 const TEAM_SHUFFLE = 'team:shuffle';
+const BOARD_UPDATE = 'board:update';
+const BATTLE_CHOSEN = 'battle:chosen';
 // Team Mode cards (EVENTS.md §6). Freeze: PB-16 (Danah).
 const CARD_PLAYED = 'card:played';
 const PLAYER_FROZEN = 'player:frozen';
@@ -127,6 +131,8 @@ export default function HostApp() {
   const [cardNotice, setCardNotice] = useState(null); // last card:played, shown for 3 s
   const [frozenIds, setFrozenIds] = useState([]); // players frozen right now (player:frozen)
   const [mineNotice, setMineNotice] = useState(null); // PB-18: Mine played / exploded, shown for 3 s
+  const [teamBoard, setTeamBoard] = useState([]);
+  const [cardWindow, setCardWindow] = useState(null);
   const timers = useRef(new Set());
   const playersRef = useRef([]);
   playersRef.current = players;
@@ -142,7 +148,7 @@ export default function HostApp() {
   };
 
   const showRound = (payload) => {
-    setRoundInfo({ round: payload.round, category: payload.category, endsAt: payload.endsAt });
+    setRoundInfo({ round: payload.round, category: payload.category, endsAt: payload.endsAt, lockedBy: payload.lockedBy ?? null });
     setStatus('round');
   };
 
@@ -182,6 +188,8 @@ export default function HostApp() {
   const showCard = (payload) => {
     const notice = { ...payload, sequence: Date.now() };
     setCardNotice(notice);
+    if (payload.card === 'lock') setCardWindow(current => current ?
+      { ...current, chosen: { ...current.chosen, lockedBy: payload.team } } : current);
     later(() => setCardNotice((current) => (current === notice ? null : current)), NOTICE_MS);
   };
   // PB-18: copy only the team, player and points, so a square id can never reach the screen.
@@ -198,6 +206,12 @@ export default function HostApp() {
     setFrozenIds((ids) => [...ids.filter((id) => id !== payload.id), payload.id]);
     later(() => setFrozenIds((ids) => ids.filter((id) => id !== payload.id)),
       payload.until - Date.now() - clockOffset.current);
+  };
+
+  const showBoard = payload => setTeamBoard(payload.board);
+  const showCardWindow = payload => {
+    setCardWindow({ chosen: { ...payload, lockedBy: null }, cardWindowEndsAt: payload.cardWindowEndsAt });
+    setStatus('cardWindow');
   };
 
   useEffect(() => {
@@ -234,6 +248,8 @@ export default function HostApp() {
     socket.on(PLAYER_FROZEN, freezePlayer);
     socket.on(CARD_PLAYED, showMinePlayed);
     socket.on(MINE_EXPLODED, showMineExploded);
+    socket.on(BOARD_UPDATE, showBoard);
+    socket.on(BATTLE_CHOSEN, showCardWindow);
 
     if (!pending.current) pending.current = openRoom();
     pending.current
@@ -250,6 +266,11 @@ export default function HostApp() {
           showRound(room.roundInfo);
         }
         else if (room.countdown) showCountdown(room.countdown);
+        else if (room.cardWindow) {
+          setTeamBoard(room.cardWindow.board);
+          setCardWindow(room.cardWindow);
+          setStatus('cardWindow');
+        }
         else if (room.roundEnd) { setRoundEnd(room.roundEnd); setStatus('roundEnd'); }
         else if (room.gameOver) endGame(room.gameOver);
         else setStatus(room.resuming ? 'resuming' : 'lobby');
@@ -271,6 +292,8 @@ export default function HostApp() {
       socket.off(PLAYER_FROZEN, freezePlayer);
       socket.off(CARD_PLAYED, showMinePlayed);
       socket.off(MINE_EXPLODED, showMineExploded);
+      socket.off(BOARD_UPDATE, showBoard);
+      socket.off(BATTLE_CHOSEN, showCardWindow);
     };
   }, [fake, attempt, navigate]);
 
@@ -365,6 +388,8 @@ export default function HostApp() {
         />
       )}
       {status === 'countdown' && <Countdown round={countdown.round} startsAt={countdown.startsAt} clockOffset={clockOffset.current} />}
+      {status === 'cardWindow' && cardWindow && <LockCardWindow host
+        state={{ ...cardWindow, board: teamBoard }} offset={clockOffset} />}
       {status === 'round' && (
         <RoundScreen
           round={roundInfo.round}
@@ -376,6 +401,7 @@ export default function HostApp() {
           scores={scores}
           cardNotice={cardNotice}
           frozenIds={frozenIds}
+          lockedBy={roundInfo.lockedBy}
         />
       )}
       {status === 'roundEnd' && roundEnd && <RoundEnd {...roundEnd} />}
@@ -402,6 +428,7 @@ export default function HostApp() {
         </div>
       )}
       <MineNotice notice={mineNotice} />
+      <LockNotice notice={cardNotice} host />
     </div>
   );
 }
