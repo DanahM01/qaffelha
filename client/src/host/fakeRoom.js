@@ -14,6 +14,7 @@ const CATEGORY = { id: 'fruits', title: 'فواكه' };
 const WORDS = ['تفاح', 'موز', 'برتقال', 'عنب', 'رمان', 'مانجو', 'كيوي', 'فراولة', 'خوخ', 'تين', 'مشمش', 'كمثرى'];
 const ANSWER_EVERY_MS = 1200;
 const LOCKED_HIT_EVERY = 4; // every 4th fake answer hits a locked word: −1 and no new chip
+const MINE_PLAY_MS = 500; // PB-18: fake Mine announced shortly after the countdown starts
 
 // Same shape as the room:create ack in screen mode.
 export function fakeCreateAck() {
@@ -26,7 +27,11 @@ export function fakeCreateAck() {
 // Team Mode (EVENTS.md §6): players carry a team, new joiners go to the smaller team, and
 // setTeam() / shuffleTeams() answer like the team:set / team:shuffle acks. After a teams start
 // the fake still plays a classic round; the board and battles are PB-14.
-export function startFakeRoom({ onPlayers, onCountdown, onRoundStart, onLocked, onScores }) {
+// PB-18 Mine: in a teams game the fake announces a Mine (card:played, no target) during the
+// countdown and explodes it (mine:exploded) when the round ends. playMine() / explodeMine()
+// trigger them by hand. Like the server, the explosion carries a squareId the host must not show.
+export function startFakeRoom({ onPlayers, onCountdown, onRoundStart, onLocked, onScores,
+  onCardPlayed = () => {}, onMineExploded = () => {} }) {
   const players = [];
   let round = 0;
   let countdownTimer = null;
@@ -34,6 +39,8 @@ export function startFakeRoom({ onPlayers, onCountdown, onRoundStart, onLocked, 
   let answerTimer = null;
   let gameMode = 'classic';
   let started = false;
+  let mineTimer = null;
+  let explodeTimer = null;
 
   const count = (team) => players.filter((p) => p.team === team).length;
   const publish = () => onPlayers({ mode: 'screen', hostId: null, gameMode, players: players.map((p) => ({ ...p })) });
@@ -64,6 +71,15 @@ export function startFakeRoom({ onPlayers, onCountdown, onRoundStart, onLocked, 
   }, JOIN_EVERY_MS);
 
   return {
+    // Same payload as the server's Mine card:played: no target, for anyone.
+    playMine(team = 'A') {
+      const by = players.find((p) => p.team === team) ?? players[0];
+      onCardPlayed({ team, card: 'mine', by: { id: by.id, name: by.name } });
+    },
+    // Same payload as the server's mine:exploded: `team` is the team that lost 3 points.
+    explodeMine(team = 'B') {
+      onMineExploded({ squareId: 5, team, points: -3 });
+    },
     setTeam(playerId, team) {
       if (started) return { ok: false, error: 'STARTED' };
       const player = players.find((p) => p.id === playerId);
@@ -94,6 +110,10 @@ export function startFakeRoom({ onPlayers, onCountdown, onRoundStart, onLocked, 
           onRoundStart({ round, category: CATEGORY, endsAt: startsAt + ROUND_MS });
           playAnswers();
         }, COUNTDOWN_MS);
+        if (teams) {
+          mineTimer = setTimeout(() => this.playMine('A'), MINE_PLAY_MS);
+          explodeTimer = setTimeout(() => this.explodeMine('B'), COUNTDOWN_MS + ROUND_MS);
+        }
       }, 0);
       return { ok: true };
     },
@@ -102,6 +122,8 @@ export function startFakeRoom({ onPlayers, onCountdown, onRoundStart, onLocked, 
       clearTimeout(countdownTimer);
       clearTimeout(roundTimer);
       clearInterval(answerTimer);
+      clearTimeout(mineTimer);
+      clearTimeout(explodeTimer);
     },
   };
 }
