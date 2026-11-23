@@ -113,10 +113,12 @@ export const sounds = {
     tone(880, 0, 0.1, { type: 'triangle', volume: 0.25 });
     tone(1320, 0.07, 0.18, { type: 'triangle', volume: 0.25 });
   },
-  // Someone else locked a word.
+  // Someone else locked a word: a padlock "click-clack" (also on the big screen).
   lock() {
-    tone(180, 0, 0.08, { type: 'square', volume: 0.15 });
-    tone(120, 0.05, 0.1, { type: 'square', volume: 0.15 });
+    noise(0, 0.03, { volume: 0.35, from: 5000, to: 3000 });
+    tone(2200, 0, 0.025, { type: 'square', volume: 0.12 });
+    noise(0.07, 0.05, { volume: 0.3, from: 2200, to: 900 });
+    tone(320, 0.07, 0.07, { type: 'square', volume: 0.2, slideTo: 160 });
   },
   // A sticker reaction reached the big screen.
   pop() {
