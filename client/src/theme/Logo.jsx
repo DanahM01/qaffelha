@@ -314,3 +314,52 @@ export const ShareIcon = (p) => (
     <path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4" />
   </Icon>
 );
+
+/* --------------------------------------------------------------------------
+   Reaction stickers (players who are out or sitting out, EVENTS.md §7).
+   Flat brand colors, thick ink outline and the offset stack shadow, like the logo.
+   -------------------------------------------------------------------------- */
+const INK = { stroke: 'var(--q-ink-900)', strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const FLAME = 'M32 5C36 15 49 20 49 36C49 48 41 57 32 57C22 57 15 49 15 38C15 30 19 25 24 21C24 29 27 32 30 32C28 22 30 13 32 5Z';
+const STICKERS = {
+  laugh: (
+    <>
+      <circle cx="31" cy="35" r="24" fill="var(--q-red-500)" />
+      <circle cx="34" cy="31" r="24" fill="var(--q-mustard-400)" {...INK} />
+      <path d="M21 26q4.5-6.5 9 0M38 26q4.5-6.5 9 0" fill="none" {...INK} strokeWidth="3.5" />
+      <path d="M20 34h28q0 15-14 15t-14-15z" fill="var(--q-ink-900)" {...INK} />
+      <path d="M28 45.5q6-6 12 0q-6 3.5-12 0z" fill="var(--q-red-500)" />
+      <path d="M14 22q-3 4 0 7q3-3 0-7zM54 22q3 4 0 7q-3-3 0-7z" fill="var(--q-blue-300)" {...INK} strokeWidth="2" />
+    </>
+  ),
+  fire: (
+    <>
+      <path d={FLAME} fill="var(--q-plum-600)" transform="translate(-3 3)" />
+      <path d={FLAME} fill="var(--q-orange-500)" {...INK} />
+      <path d="M32 27C36 33 41 37 41 44C41 50 37 54 32 54C27 54 23 50 23 45C23 40 27 37 29 34C30 39 32 39 33 38C31 34 31 31 32 27Z" fill="var(--q-mustard-400)" />
+      <path d="M24 40q1-5 4-8" fill="none" stroke="var(--q-cream-100)" strokeWidth="2.5" strokeLinecap="round" />
+    </>
+  ),
+  shock: (
+    <>
+      <circle cx="31" cy="35" r="24" fill="var(--q-red-500)" />
+      <circle cx="34" cy="31" r="24" fill="var(--q-cream-100)" {...INK} />
+      <path d="M20 17l8-3M48 17l-8-3" fill="none" {...INK} />
+      <circle cx="26" cy="27" r="5.5" fill="var(--q-ink-900)" />
+      <circle cx="42" cy="27" r="5.5" fill="var(--q-ink-900)" />
+      <circle cx="27.5" cy="25.5" r="1.7" fill="var(--q-cream-100)" />
+      <circle cx="43.5" cy="25.5" r="1.7" fill="var(--q-cream-100)" />
+      <ellipse cx="34" cy="43" rx="5" ry="7" fill="var(--q-ink-900)" />
+      <path d="M53 6q-5 7 0 10q5-3 0-10z" fill="var(--q-blue-300)" {...INK} strokeWidth="2" />
+    </>
+  ),
+};
+export const REACTION_LABELS = { laugh: 'ههههه', fire: 'نار!', shock: 'يا ساتر' };
+export function ReactionSticker({ kind, size = '1em', className = '' }) {
+  if (!STICKERS[kind]) return null;
+  return (
+    <svg viewBox="0 0 64 64" width={size} height={size} className={className} aria-hidden="true" overflow="visible">
+      {STICKERS[kind]}
+    </svg>
+  );
+}

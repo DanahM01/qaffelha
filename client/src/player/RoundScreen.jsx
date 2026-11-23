@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { EyeIcon, LockIcon, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
+import { socket } from "../socket.js";
+import { EyeIcon, LockIcon, ReactionSticker, REACTION_LABELS, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
 import { isSittingOut } from "./teamState.js";
 import LockBadge from "../cards/LockBadge.jsx";
@@ -13,6 +14,36 @@ const MESSAGES = {
   frozen: "متجمّد! استنى ثواني",
 };
 const TEAM_NAMES = { A: "الفريق الأول", B: "الفريق الثاني" };
+// Sticker reactions (EVENTS.md §7): only for players who are out or sitting out.
+const REACTIONS = ["laugh", "fire", "shock"];
+const REACTION_GAP_MS = 400;
+
+function ReactionBar() {
+  const [busy, setBusy] = useState(false);
+  function send(reaction) {
+    if (busy) return;
+    setBusy(true);
+    socket.emit("reaction:send", { reaction });
+    setTimeout(() => setBusy(false), REACTION_GAP_MS);
+  }
+  return (
+    <div className="q-react-bar" role="group" aria-label="تفاعل مع اللعب">
+      {REACTIONS.map((reaction) => (
+        <button
+          key={reaction}
+          type="button"
+          className="q-react-btn"
+          disabled={busy}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => send(reaction)}
+        >
+          <ReactionSticker kind={reaction} className="q-react-btn__sticker" />
+          <span className="q-react-btn__label">{REACTION_LABELS[reaction]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function RoundScreen({
   state,
@@ -47,9 +78,11 @@ export default function RoundScreen({
   // Freeze card (PB-16, SPEC §17.6): Team Mode only, during the battle, not in its last 3 seconds.
   const team = me?.team ?? state.me?.team ?? null;
   const teams = state.gameMode === "teams" && Boolean(team);
-  const freezeLeft = state.cards?.[team]?.freeze ?? 1;
+    const freezeLeft = state.cards?.[team]?.freeze ?? 1;
   const chooserId = state.sitout?.[team] ?? null;
+  const sittingOut = chooserId;
   const mayPlayCard = !chooserId || chooserId === meId;
+  const canReact = out || (teams && chooserId === meId);
   const canFreeze =
     teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && !state.cardChoices?.[team] && seconds > 3;
 
@@ -152,6 +185,7 @@ export default function RoundScreen({
             </div>
           )}
         </div>
+                {canReact && <ReactionBar />}
         {teams && (
             <div className="q-card-play">
               <button

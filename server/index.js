@@ -18,7 +18,11 @@ const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin:
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
   submit: 'answer:submit', locked: 'answer:locked', score: 'score:update', end: 'round:end',
   over: 'game:over', restart: 'game:restart',
-  card: 'card:play', cardPlayed: 'card:played', frozen: 'player:frozen' });
+  card: 'card:play', cardPlayed: 'card:played', frozen: 'player:frozen',
+  react: 'reaction:send', reaction: 'reaction:show' });
+// Sticker reactions from players who are out or sitting out (EVENTS.md §7).
+const REACTIONS = Object.freeze(['laugh', 'fire', 'shock']);
+const REACTION_GAP_MS = 400;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const TEAM_EVENTS = Object.freeze({ set: 'team:set', shuffle: 'team:shuffle', board: 'board:update',
   turn: 'turn:start', choose: 'square:choose', chosen: 'battle:chosen', end: 'battle:end', sitout: 'team:sitout' });
@@ -422,6 +426,21 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
       }
       // Steal is sent through square:choose, not card:play (EVENTS.md §6).
       ack({ ok: false, error: 'NO_CARD' });
+    });
+    let lastReaction = -Infinity;
+    handle(EVENTS.react, (input, ack) => {
+      const room = rooms.get(socket.data.code);
+      const player = room?.players.get(socket.data.playerId);
+      if (!room || player?.socketId !== socket.id || !REACTIONS.includes(input.reaction)) {
+        return ack({ ok: false, error: 'NOT_ALLOWED' });
+      }
+      const sittingOut = Object.values(room.sitout ?? {}).includes(player.id);
+      if (!player.out && !sittingOut) return ack({ ok: false, error: 'NOT_ALLOWED' });
+      const at = now();
+      if (at - lastReaction < REACTION_GAP_MS) return ack({ ok: false, error: 'TOO_FAST' });
+      lastReaction = at;
+      ack({ ok: true });
+      emit(room, EVENTS.reaction, { reaction: input.reaction, by: { id: player.id, name: player.name, team: player.team ?? null } });
     });
     handle(EVENTS.restart, (input, ack) => {
       const room = rooms.get(roomCode(input.code));

@@ -10,6 +10,7 @@ import RoundEnd from './RoundEnd.jsx';
 import Results from './Results.jsx';
 import { fakeCreateAck, startFakeRoom } from './fakeRoom.js';
 import { restoreHostSnapshot } from './restoreHostSnapshot.js';
+import { ReactionSticker } from '../theme/Logo.jsx';
 import MineNotice from './MineNotice.jsx';
 import LockCardWindow from '../cards/LockCardWindow.jsx';
 import LockNotice from '../cards/LockNotice.jsx';
@@ -37,6 +38,10 @@ const PLAYER_FROZEN = 'player:frozen';
 // PB-18 Mine (Renad). board:mines is never sent to the big screen, so it is not listened to here.
 const MINE_EXPLODED = 'mine:exploded';
 const NOTICE_MS = 3000;
+// Sticker reactions from players who are out or sitting out (EVENTS.md §7).
+const REACTION_SHOW = 'reaction:show';
+const REACTION_MS = 3300;
+const REACTION_MAX = 24;
 
 const STORE_KEY = 'qaffelha';
 const ACK_TIMEOUT_MS = 10000;
@@ -130,6 +135,7 @@ export default function HostApp() {
   const [teamError, setTeamError] = useState(false);
   const [cardNotice, setCardNotice] = useState(null); // last card:played, shown for 3 s
   const [frozenIds, setFrozenIds] = useState([]); // players frozen right now (player:frozen)
+  const [reactions, setReactions] = useState([]); // stickers flying up the screen right now
   const [mineNotice, setMineNotice] = useState(null); // PB-18: Mine played / exploded, shown for 3 s
   const [teamBoard, setTeamBoard] = useState([]);
   const [cardWindow, setCardWindow] = useState(null);
@@ -208,6 +214,19 @@ export default function HostApp() {
       payload.until - Date.now() - clockOffset.current);
   };
 
+  // Each sticker starts at a random spot along the bottom and floats up for about 3 s.
+  const showReaction = (payload) => {
+    const reaction = {
+      key: `${Date.now()}-${Math.random()}`,
+      kind: payload.reaction,
+      name: payload.by?.name ?? '',
+      team: payload.by?.team ?? null,
+      x: `${8 + Math.random() * 80}%`,
+      drift: `${Math.round(Math.random() * 80 - 40)}px`,
+      spin: `${Math.round(Math.random() * 30 - 15)}deg`,
+    };
+    setReactions((list) => [...list.slice(1 - REACTION_MAX), reaction]);
+    later(() => setReactions((list) => list.filter((entry) => entry !== reaction)), REACTION_MS);   };
   const showBoard = payload => setTeamBoard(payload.board);
   const showCardWindow = payload => {
     setCardWindow({ chosen: { ...payload, lockedBy: null }, cardWindowEndsAt: payload.cardWindowEndsAt });
@@ -246,6 +265,7 @@ export default function HostApp() {
     socket.on(GAME_OVER, endGame);
     socket.on(CARD_PLAYED, showCard);
     socket.on(PLAYER_FROZEN, freezePlayer);
+    socket.on(REACTION_SHOW, showReaction);
     socket.on(CARD_PLAYED, showMinePlayed);
     socket.on(MINE_EXPLODED, showMineExploded);
     socket.on(BOARD_UPDATE, showBoard);
@@ -290,6 +310,7 @@ export default function HostApp() {
       socket.off(GAME_OVER, endGame);
       socket.off(CARD_PLAYED, showCard);
       socket.off(PLAYER_FROZEN, freezePlayer);
+      socket.off(REACTION_SHOW, showReaction);
       socket.off(CARD_PLAYED, showMinePlayed);
       socket.off(MINE_EXPLODED, showMineExploded);
       socket.off(BOARD_UPDATE, showBoard);
@@ -408,6 +429,15 @@ export default function HostApp() {
       {status === 'over' && gameOver && (
         <Results winner={gameOver.winner} ranking={gameOver.ranking} onAgain={playAgain} onHome={goHome} busy={restarting} error={restartError} />
       )}
+      <div className="q-reactions" aria-hidden="true">
+        {reactions.map((r) => (
+          <span key={r.key} className={`q-reaction${r.team ? ` q-reaction--team-${r.team}` : ''}`}
+            style={{ '--_x': r.x, '--_drift': r.drift, '--_spin': r.spin }}>
+            <ReactionSticker kind={r.kind} className="q-reaction__sticker" />
+            <span className="q-reaction__name">{r.name}</span>
+          </span>
+        ))}
+      </div>
       {status === 'connecting' && (
         <div className="q-screen-host q-center" style={{ justifyContent: 'center' }}>
           <div className="q-waiting" role="status"><span className="q-waiting__pulse" />نفتح الغرفة…</div>
