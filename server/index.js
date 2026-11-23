@@ -8,10 +8,11 @@ import { MongoClient } from 'mongodb';
 import * as teamRules from './game.js';
 import { LIMITS, validateName, createPlayer, createRoom, joinError, canStart, prepareCategories,
   selectCategory, startRound, submitAnswer, eliminatePlayer, gameRanking, restartRoom,
-  playersPayload, scoresPayload, rejoinSnapshot, playFreeze,
+ playersPayload, scoresPayload, rejoinSnapshot, playFreeze, teamGameResult, prepareTeamSitouts,
   TEAM_LIMITS, assignTeams, beginTeamGame, beginTeamTurn, chooseSquare, automaticSquare,
   boardPayload, teamScores, submitBoardAnswer, finishTeamBattle, restartTeamRoom } from './game.js';
 import { playMine, teamMines, settleMine } from './game.js'; // PB-18 Mine card (Renad)
+import { playLock } from './game.js'; // PB-17 Lock card (Leena)
 
 const EVENTS = Object.freeze({ create: 'room:create', join: 'room:join', rejoin: 'room:rejoin',
   players: 'room:players', start: 'game:start', countdown: 'round:countdown', round: 'round:start',
@@ -29,6 +30,31 @@ const TEAM_EVENTS = Object.freeze({ set: 'team:set', shuffle: 'team:shuffle', bo
 const MINE_EVENTS = Object.freeze({ mines: 'board:mines', exploded: 'mine:exploded' });
 const payloadObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const roomCode = (value) => typeof value === 'string' && /^[A-Za-z]{4}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
+
+// Reef / PB-15. PB-14 calls this after settling a battle and its card effects,
+// before scheduling another turn. Returns true when no next turn should run.
+export function completeTeamGame(io, rooms, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameMode !== 'teams') return false;
+  if (room.status === 'over') return true;
+  const result = teamGameResult(room.board, room.teamPoints, room.cards);
+  if (!result) return false;
+  rooms.set(code, { ...room, status: 'over', gameOver: result });
+  io.to(code).emit(EVENTS.over, result);
+  return true;
+}
+
+// Reef / PB-20. PB-14 calls once after battle settlement, before the next turn
+// and its card window. Never call again during that same battle's countdown.
+export function publishTeamSitouts(io, rooms, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameMode !== 'teams' || room.status !== 'battleEnd') return false;
+  if (room.sitoutPreparedRound === room.round) return false;
+  const next = { ...prepareTeamSitouts(room), sitoutPreparedRound: room.round };
+  rooms.set(code, next);
+  io.to(code).emit('team:sitout', next.sitout);
+  return true;
+}
 
 export function attachGameHandlers(io, { categories, now = Date.now, schedule = setTimeout,
   cancel = clearTimeout, random = Math.random, log = console.log,
@@ -367,7 +393,7 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
         return ack({ ok: false, error: 'NOT_ALLOWED' });
       }
       if (input.card === 'freeze') {
-        const result = playFreeze(room, player.id, now(), random());
+        const result = (room.gameMode === 'teams' ? teamRules.playTeamFreeze : playFreeze)(room, player.id, now(), random());
         if (result.error) return ack({ ok: false, error: result.error });
         rooms.set(room.code, result.room);
         ack({ ok: true });
@@ -388,7 +414,17 @@ export function attachGameHandlers(io, { categories, now = Date.now, schedule = 
         log(`room ${room.code} card mine`);
         return;
       }
-      // lock, mine and steal are added by their own stories (SPEC §17.6).
+      if (input.card === 'lock') {
+        const result = playLock(room, player.id, now(), input.target);
+        if (result.error) return ack({ ok: false, error: result.error });
+        rooms.set(room.code, result.room);
+        ack({ ok: true });
+        emit(result.room, EVENTS.cardPlayed, { team: result.team, card: 'lock', by: result.by, target: result.target });
+        publishBoard(result.room);
+        log(`room ${room.code} card lock`);
+        return;
+      }
+      // Steal is sent through square:choose, not card:play (EVENTS.md §6).
       ack({ ok: false, error: 'NO_CARD' });
     });
     let lastReaction = -Infinity;

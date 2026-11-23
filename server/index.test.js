@@ -383,7 +383,7 @@ test('PB-16 freeze card over sockets: announce, freeze the top rival for 3 s, on
   assert.equal(frozen.until - 103000 >= 3000, true);
   assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'frozen');
   assert.deepEqual(players[1].request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NO_CARD' });
-  assert.deepEqual(players[1].request('card:play', { code, card: 'lock' }), { ok: false, error: 'NO_CARD' });
+  assert.deepEqual(players[1].request('card:play', { code, card: 'lock' }), { ok: false, error: 'NOT_NOW' });
   assert.deepEqual(h.connect().request('card:play', { code, card: 'freeze' }), { ok: false, error: 'NOT_ALLOWED' });
   h.advance(3000);
   assert.equal(players[3].request('answer:submit', { code, text: 'تفاح' }).result, 'correct');
@@ -622,5 +622,50 @@ test('sticker reactions: only out or sitting-out players, three stickers, rate l
   const outsider = h.connect();
   assert.deepEqual(outsider.request('reaction:send', { reaction: 'laugh' }), { ok: false, error: 'NOT_ALLOWED' });
   assert.doesNotThrow(() => outsider.emit('reaction:send', null));
+    h.dispose();
+});
+
+test('PB-15 real team engine completes a line and restores the final result after refresh', () => {
+  const h = teamHarness();
+  const { host, code, players } = h.teamLobby();
+  host.request('game:start', { code, gameMode: 'teams' });
+  for (const square of h.rooms.get(code).board.slice(0, 3)) square.owner = 'A';
+  players[0].request('square:choose', { code, squareId: 3 });
+  h.advance(8000);
+  players[0].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(host.latest('game:over').winnerTeam, 'A');
+  assert.deepEqual(host.latest('game:over').line, [0, 1, 2, 3]);
+  const refresh = h.connect().request('room:rejoin', { code, playerId: players[0].data.playerId });
+  assert.equal(refresh.state.status, 'over');
+  assert.equal(refresh.state.winnerTeam, 'A');
+  h.advance(60000);
+  assert.equal(h.jobs.size, 0);
+  h.dispose();
+});
+
+test('PB-20 real engine rotates sitouts and enforces one fixed card choice across refresh', () => {
+  const h = teamHarness();
+  const { host, code, players } = h.teamLobby('screen', 6);
+  host.request('game:start', { code, gameMode: 'teams' });
+  const room = h.rooms.get(code);
+  room.sitout = { A: players[0].data.playerId, B: null };
+  room.board[0].owner = 'B';
+  assert.equal(players[2].request('square:choose', { code, squareId: 0, steal: true }).error, 'NOT_ALLOWED');
+  assert.equal(players[0].request('square:choose', { code, squareId: 0, steal: true }).ok, true);
+  const refreshed = h.connect();
+  const snapshot = refreshed.request('room:rejoin', { code, playerId: players[0].data.playerId }).state;
+  assert.equal(snapshot.cardChoices.A, 'steal');
+  assert.equal(snapshot.cardWindowEndsAt, 105000);
+  h.advance(8000);
+  assert.equal(refreshed.request('answer:submit', { code, text: 'موز' }).result, 'closed');
+  assert.equal(refreshed.request('card:play', { code, card: 'freeze' }).error, 'NOT_ALLOWED');
+  assert.equal(players[2].request('card:play', { code, card: 'freeze' }).error, 'NOT_ALLOWED');
+  assert.equal(h.rooms.get(code).cards.A.freeze, 1);
+  players[2].request('answer:submit', { code, text: 'موز' });
+  h.advance(20000);
+  assert.equal(host.latest('team:sitout').A, players[4].data.playerId);
+  assert.equal(host.latest('team:sitout').B, players[5].data.playerId);
+  assert.deepEqual(h.rooms.get(code).cardChoices, {});
   h.dispose();
 });

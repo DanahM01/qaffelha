@@ -2,7 +2,9 @@
 export function restoreHostSnapshot(state) {
   const countdown = state.status === 'countdown' ? { round: state.round, startsAt: state.startsAt } : null;
   const roundInfo = state.status === 'round' ? { round: state.round, category: state.category,
-    endsAt: state.endsAt, locked: [...state.locked].reverse(), scores: state.scores } : null;
+    endsAt: state.endsAt, locked: [...state.locked].reverse(), scores: state.scores,
+    lockedBy: state.chosen?.lockedBy ?? state.lockedBy ?? null } : null;
+  const cardWindow = state.gameMode === 'teams' && state.status === 'cardWindow' ? state : null;
   const roundEnd = state.status === 'roundEnd' && state.eliminated ? (() => {
     const active = new Set(state.players.filter(player => !player.out || player.id === state.eliminated.id).map(player => player.id));
     const names = new Map(state.players.map(player => [player.id, player.name]));
@@ -14,6 +16,6 @@ export function restoreHostSnapshot(state) {
   })() : null;
   const gameOver = state.status === 'over' && state.winner && state.ranking ?
     { winner: state.winner, ranking: state.ranking } : null;
-  return { players: state.players, countdown, roundInfo, roundEnd, gameOver,
-    resuming: !(state.status === 'lobby' || countdown || roundInfo || roundEnd || gameOver) };
+  return { players: state.players, countdown, roundInfo, roundEnd, gameOver, cardWindow,
+    resuming: !(state.status === 'lobby' || countdown || roundInfo || roundEnd || gameOver || cardWindow) };
 }

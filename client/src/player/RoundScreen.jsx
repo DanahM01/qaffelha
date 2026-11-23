@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { socket } from "../socket.js";
 import { EyeIcon, LockIcon, ReactionSticker, REACTION_LABELS, SendIcon, SnowflakeIcon } from "../theme/Logo.jsx";
 import useServerSeconds from "./useServerSeconds.js";
+import { isSittingOut } from "./teamState.js";
+import LockBadge from "../cards/LockBadge.jsx";
 
 const MESSAGES = {
   correct: "صح! قفّلتها عليهم",
@@ -62,7 +64,9 @@ export default function RoundScreen({
     (state.scores || []).map((entry) => [entry.id, entry.score]),
   );
   const me = state.players.find((player) => player.id === meId);
-  const out = me?.out || state.me?.out;
+  const sittingOut = state.gameMode === "teams" && isSittingOut(state, meId);
+  const out =
+    state.gameMode === "teams" ? sittingOut : me?.out || state.me?.out;
   const active = state.players.filter((player) => !player.out);
   const score = scores.get(meId) ?? state.me?.score ?? 0;
   const rank =
@@ -74,12 +78,13 @@ export default function RoundScreen({
   // Freeze card (PB-16, SPEC §17.6): Team Mode only, during the battle, not in its last 3 seconds.
   const team = me?.team ?? state.me?.team ?? null;
   const teams = state.gameMode === "teams" && Boolean(team);
-  const freezeLeft = state.cards?.[team]?.freeze ?? 1;
-  const sittingOut = state.sitout?.[team] ?? null;
-  const mayPlayCard = !sittingOut || sittingOut === meId;
-  const canReact = out || (teams && sittingOut === meId);
+    const freezeLeft = state.cards?.[team]?.freeze ?? 1;
+  const chooserId = state.sitout?.[team] ?? null;
+  const sittingOut = chooserId;
+  const mayPlayCard = !chooserId || chooserId === meId;
+  const canReact = out || (teams && chooserId === meId);
   const canFreeze =
-    teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && seconds > 3;
+    teams && !disabled && !cardBusy && freezeLeft > 0 && mayPlayCard && !state.cardChoices?.[team] && seconds > 3;
 
   function submit(event) {
     event.preventDefault();
@@ -101,6 +106,7 @@ export default function RoundScreen({
         </span>
       </div>
       <h1 className="q-category">{state.category?.title}</h1>
+      {teams && <LockBadge lockedBy={state.chosen?.lockedBy ?? state.lockedBy} />}
       <div
         className={`q-timer ${timerClass}`}
         style={{ "--q-progress": Math.min(seconds, 20) / 20 }}
@@ -179,15 +185,8 @@ export default function RoundScreen({
             </div>
           )}
         </div>
-        {canReact && <ReactionBar />}
-        {out ? (
-          <p className="q-spectate">
-            <EyeIcon />
-            طلعت من اللعبة — تتفرج
-          </p>
-        ) : (
-          <>
-          {teams && (
+                {canReact && <ReactionBar />}
+        {teams && (
             <div className="q-card-play">
               <button
                 type="button"
@@ -205,6 +204,16 @@ export default function RoundScreen({
               </button>
             </div>
           )}
+        {out ? (
+          <p className="q-spectate">
+            <EyeIcon />
+            {sittingOut
+              ? "ترتاح هالجولة — تتابع وتختار بطاقة فريقك"
+              : "طلعت من اللعبة — تتفرج"}
+          </p>
+        ) : (
+          <>
+
           <div className="q-frozen-wrap">
           {frozen && (
             <div className="q-frozen" role="alert">
