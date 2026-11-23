@@ -17,7 +17,7 @@ export const TEAM_NAMES = Object.freeze({
 export function myTeam(state, playerId) {
   return (
     state.players?.find((player) => player.id === playerId)?.team ??
-    (state.me?.id === playerId ? state.me.team : null) ??
+    (state.me?.id === playerId ? state.me?.team : null) ??
     null
   );
 }
@@ -27,7 +27,7 @@ export function isSittingOut(state, playerId) {
   if (!team) return false;
   return state.sitout && Object.hasOwn(state.sitout, team)
     ? state.sitout[team] === playerId
-    : Boolean(state.me?.id === playerId && state.me.sittingOut);
+    : Boolean(state.me?.id === playerId && state.me?.sittingOut);
 }
 
 export function applyTeamEvent(state, event, payload) {

@@ -80,7 +80,6 @@ export default function RoundScreen({
   const teams = state.gameMode === "teams" && Boolean(team);
     const freezeLeft = state.cards?.[team]?.freeze ?? 1;
   const chooserId = state.sitout?.[team] ?? null;
-  const sittingOut = chooserId;
   const mayPlayCard = !chooserId || chooserId === meId;
   const canReact = out || (teams && chooserId === meId);
   const canFreeze =
